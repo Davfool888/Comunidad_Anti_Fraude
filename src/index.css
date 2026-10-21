@@ -1,0 +1,201 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, sans-serif;
+
+  /* Azules y violetas de marca (era una paleta ciruela) */
+  --color-ink: #1c2b52;
+  --color-plum-900: #16224a;
+  --color-plum-800: #1e2c5c;
+  --color-plum-700: #33447e;
+  --color-grape-900: #3a3f8f;
+  --color-grape-700: #5b63d8;
+  --color-grape-500: #7b8bff;
+  --color-grape-400: #9db0ff;
+  --color-grape-300: #c3d1ff;
+  --color-grape-200: #e2e9ff;
+
+  /* Acento verde: sello de verificado */
+  --color-lime-400: #57e3b0;
+  --color-lime-500: #2fc98f;
+  --color-lime-600: #1fae78;
+  --color-lime-700: #12885e;
+
+  /* Cian de neón */
+  --color-neon-300: #9defff;
+  --color-neon-400: #5fe4ff;
+  --color-neon-500: #22b6e6;
+
+  /* Fondo claro azul */
+  --color-cream-50: #f8fbff;
+  --color-cream-100: #eef4fd;
+  --color-cream-200: #dfe9fb;
+
+  /* Menta / cian suave */
+  --color-mint-50: #f1fbff;
+  --color-mint-100: #dff5fd;
+  --color-mint-200: #c5ecfb;
+
+  --shadow-glow-lime: 0 0 30px -8px rgba(47, 201, 143, 0.55);
+  --shadow-panel: 0 40px 90px -34px rgba(28, 43, 82, 0.4);
+  --shadow-card-float: 0 26px 54px -30px rgba(28, 43, 82, 0.45);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-cream-100);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+
+  /* Onda del micrófono: barras que suben y bajan mientras se graba */
+  @keyframes pulse {
+    from {
+      transform: scaleY(0.45);
+    }
+    to {
+      transform: scaleY(1.15);
+    }
+  }
+}
+
+@layer components {
+  /* Cuadro rayado azul que asoma por debajo de cada tarjeta */
+  .stripe-mint {
+    background-image: repeating-linear-gradient(
+      135deg,
+      #b9e6fb 0px,
+      #b9e6fb 7px,
+      #e6f7ff 7px,
+      #e6f7ff 14px
+    );
+  }
+
+  /* Resplandor verde de los iconos sobre las tarjetas */
+  .glow-lime {
+    background: radial-gradient(circle, rgba(47, 201, 143, 0.4) 0%, transparent 70%);
+  }
+
+  /* Resplandor neón intenso (imágenes 3D de las tarjetas) */
+  .glow-neon {
+    background: radial-gradient(
+      circle,
+      rgba(95, 228, 255, 0.65) 0%,
+      rgba(34, 182, 230, 0.32) 38%,
+      transparent 72%
+    );
+  }
+
+  /* Bisel de vidrio: filo luminoso superior + canto interior suave */
+  .glass-card {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.45),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  }
+
+  /* Grano fílmico sobre toda la página: quita el aspecto plano.
+     Sin `mix-blend-mode`: el modo de mezcla obliga al compositor a
+     reprocesar la pantalla entera en cada fotograma del lienzo 3D. */
+  .grain {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0.05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Ondas de puntos del fondo */
+  .halftone-violet {
+    background-image: radial-gradient(circle at center, rgba(91, 99, 216, 0.35) 1.5px, transparent 1.6px);
+    background-size: 8px 8px;
+    -webkit-mask-image: radial-gradient(58% 58% at 50% 50%, #000 0%, transparent 78%);
+    mask-image: radial-gradient(58% 58% at 50% 50%, #000 0%, transparent 78%);
+  }
+
+  /* Panel translúcido con degradado azul-violeta */
+  .panel-purple {
+    background-image:
+      radial-gradient(80% 70% at 92% -6%, rgba(95, 228, 255, 0.5) 0%, transparent 58%),
+      radial-gradient(75% 65% at 18% 100%, rgba(169, 139, 245, 0.45) 0%, transparent 62%),
+      linear-gradient(152deg, #eaf1ff 0%, #dfe9fb 38%, #e6e9fb 72%, #eef1fd 100%);
+  }
+
+  /* Tarjeta de cristal claro: los iconos 3D se leen sobre ella */
+  .card-purple {
+    background-image:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.62) 100%),
+      radial-gradient(85% 55% at 50% 0%, rgba(123, 139, 255, 0.22) 0%, transparent 68%);
+  }
+
+  /* Marcadores isométricos del mapa del barrio (Leaflet) */
+  .ns-iso-marker {
+    background: none !important;
+    border: none !important;
+  }
+
+  .ns-iso-marker__box {
+    width: 46px;
+    height: 54px;
+    filter: drop-shadow(0 6px 10px rgba(30, 55, 130, 0.35));
+    transition:
+      transform 200ms ease,
+      filter 200ms ease;
+  }
+
+  .ns-iso-marker:hover .ns-iso-marker__box {
+    transform: translateY(-3px) scale(1.06);
+    filter: drop-shadow(0 10px 16px rgba(30, 55, 130, 0.42));
+  }
+
+  .ns-iso-tooltip {
+    border: 0 !important;
+    border-radius: 12px !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    box-shadow: 0 10px 26px -14px rgba(30, 55, 130, 0.9) !important;
+    padding: 7px 10px !important;
+  }
+
+  .ns-iso-tooltip::before {
+    border-top-color: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  .ns-iso-tooltip__name {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 800;
+    color: #243d6b;
+  }
+
+  .ns-iso-tooltip__label {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    color: #8aa0c4;
+  }
+}
+
+/*
+ * Ajustes del mapa del barrio.
+ *
+ * Van fuera de `@layer` a propósito: la hoja de Leaflet no está en ninguna
+ * capa y, en CSS, lo que no tiene capa gana a lo que sí la tiene.
+ */
+
+/* El control de zoom baja para no chocar con el conmutador de estilos */
+.ns-map .leaflet-top.leaflet-right {
+  top: 56px;
+}
+
+/* La escala se separa del borde inferior */
+.ns-map .leaflet-bottom.leaflet-left {
+  margin-bottom: 6px;
+}
+

@@ -1,0 +1,93 @@
+# ---------------------------------------------------------------------------
+# Dependencias y compilado
+# ---------------------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.js
+
+# Carpeta de salida de Vite
+dist/
+dist-ssr/
+build/
+*.local
+
+# ---------------------------------------------------------------------------
+# Cachés de herramientas
+# ---------------------------------------------------------------------------
+.vite/
+.cache/
+.parcel-cache/
+.turbo/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Variables de entorno y secretos
+# (el proyecto no necesita ninguna hoy, pero que no se suban nunca)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Registros
+# ---------------------------------------------------------------------------
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ---------------------------------------------------------------------------
+# Sistema operativo
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ---------------------------------------------------------------------------
+# Editores e IDE
+# ---------------------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.iml
+
+# ---------------------------------------------------------------------------
+# Pruebas y cobertura
+# ---------------------------------------------------------------------------
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# ---------------------------------------------------------------------------
+# Herramientas locales de desarrollo
+# (sondas de captura, servidores auxiliares, notas de trabajo)
+# ---------------------------------------------------------------------------
+shotserver.mjs
+sonda-*.mjs
+scan-utf8.mjs
+fix-escapes.mjs
+fix-words.mjs
+*.local.mjs
+captures/
+capturas/
+screenshots/
+
+# ---------------------------------------------------------------------------
+# Sistema de versiones
+# ---------------------------------------------------------------------------
+*.orig
+*.rej
+*.bak

@@ -1,0 +1,21 @@
+# Normaliza los finales de línea dentro del repositorio.
+# En Windows se guardan como LF y Git los convierte al comprobar.
+* text=auto eol=lf
+
+# Guiones y comandos de Windows conservan CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Archivos binarios
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp3 binary
+*.mp4 binary
+*.pdf binary
