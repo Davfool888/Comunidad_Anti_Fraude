@@ -3,6 +3,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Community, CommunityNetwork } from '../../data/networks'
 import { approximateHouses, type HousePoint, subscribeRealHouses } from '../../data/houses'
+import { timeAgo, useAlerts } from '../../lib/alertsStore'
 import { STYLE_BY_BUSINESS } from '../three/network/arrangement'
 import type { ShopStyle } from '../three/network/palette'
 import { isoBuildingSvg, type IsoColors } from './isoBuilding'
@@ -252,6 +253,58 @@ export function NeighborhoodMap({
     }
   }, [houses, shops, community])
 
+  // Alertas de la red en vivo: sobre el comercio que reportó o en su ubicación
+  const { alerts } = useAlerts({ networkId: network.id, communityId: community.id })
+  const alertMarkersRef = useRef<L.Marker[]>([])
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    alertMarkersRef.current.forEach((marker) => marker.remove())
+    alertMarkersRef.current = []
+
+    const anchors = pickAnchors(houses, community, shops.length + 4)
+    const colors = { danger: '#e23b5f', warning: '#e9a13b', info: '#5b7cf5' } as const
+    // centro del grupo de comercios: ahí se reparten las alertas sin ubicación propia
+    const used = anchors.slice(0, Math.max(shops.length, 1))
+    const hub = used.length
+      ? {
+          lat: used.reduce((sum, house) => sum + house.lat, 0) / used.length,
+          lng: used.reduce((sum, house) => sum + house.lng, 0) / used.length,
+        }
+      : { lat: community.lat, lng: community.lng }
+
+    alerts.slice(0, 25).forEach((alert, index) => {
+      const shopIndex = shops.findIndex((shop) => shop.name === alert.business_name)
+      const anchor = shopIndex >= 0 ? anchors[shopIndex % Math.max(anchors.length, 1)] : null
+      // sin comercio ni coordenadas: alrededor del centro del barrio, sin solaparse
+      const angle = index * 2.4
+      const position: [number, number] = anchor
+        ? [anchor.lat + 0.00012, anchor.lng]
+        : alert.lat != null && alert.lng != null && (alert.lat !== community.lat || alert.lng !== community.lng)
+          ? [alert.lat, alert.lng]
+          : [hub.lat + Math.sin(angle) * 0.00028, hub.lng + Math.cos(angle) * 0.00036]
+
+      const color = colors[alert.level]
+      const icon = L.divIcon({
+        className: 'ns-alert-marker',
+        html: `<span class="ns-alert-marker__dot" style="background:${color};border-color:${color}">!</span>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      })
+      const marker = L.marker(position, { icon, zIndexOffset: 2000, title: alert.title }).addTo(map)
+      const tooltip = document.createElement('span')
+      const name = document.createElement('span')
+      name.className = 'ns-iso-tooltip__name'
+      name.textContent = alert.title // textContent: el texto del usuario nunca se interpreta como HTML
+      const detail = document.createElement('span')
+      detail.className = 'ns-iso-tooltip__label'
+      detail.textContent = `${alert.category_label} · ${timeAgo(alert.created_at)}`
+      tooltip.append(name, detail)
+      marker.bindTooltip(tooltip, { direction: 'top', offset: [0, -14], className: 'ns-iso-tooltip' })
+      alertMarkersRef.current.push(marker)
+    })
+  }, [alerts, houses, shops, community])
+
   return (
     <div className={`relative h-full w-full ${className}`}>
       <div ref={containerRef} className="ns-map h-full w-full bg-[#dfe9fb]" />
@@ -301,6 +354,11 @@ export function NeighborhoodMap({
         <p className="mt-1.5 text-[10.5px] font-semibold text-[#5d76a6]">
           {shops.length} comercios · {community.stats.merchants} verificados
         </p>
+        {alerts.length > 0 && (
+          <p className="mt-1 text-[10.5px] font-bold text-[#c2274a]">
+            {alerts.length} alerta{alerts.length === 1 ? '' : 's'} activa{alerts.length === 1 ? '' : 's'} en el barrio
+          </p>
+        )}
         <p className="mt-2 text-[8.5px] font-medium text-[#9db0cd]">{style.attribution}</p>
       </div>
     </div>

@@ -6,6 +6,7 @@ import { GAME_BADGES } from '../../../lib/learning/engine'
 import { EducationCenter } from '../education/EducationCenter'
 import { useLearning } from './learningContext'
 import { learningIcons } from './learningIcons'
+import { NewModalities } from './NewModalities'
 
 /**
  * Cada juego se carga en diferido: el material educativo (casos, historias,
@@ -242,6 +243,9 @@ function HomeView({
           ))}
         </div>
       </section>
+
+      {/* modalidades vigentes: se actualizan con los reportes de la red */}
+      <NewModalities />
 
       {/* recomendados */}
       <section aria-labelledby="centro-recomendados">

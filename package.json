@@ -9,9 +9,13 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "lint": "oxlint",
-    "test": "npm run typecheck && npm run lint && npm run build"
+    "test": "npm run typecheck && npm run lint && npm run build",
+    "postinstall": "node scripts/setup-vision.mjs",
+    "dev:api": "cd server && .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000",
+    "test:api": "cd server && .venv/Scripts/python -m pytest -q"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.21",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
     "@react-three/postprocessing": "^3.2.1",
@@ -20,6 +24,7 @@
     "postprocessing": "^6.39.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "tesseract.js": "^6.0.1",
     "three": "^0.186.1"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatLevel, ChatMessage, ChatParticipant } from '../../data/chat'
 import { ALERT_LABEL, autoReply, buildChat } from '../../data/chat'
+import { useAlerts } from '../../lib/alertsStore'
 import type { Community, CommunityNetwork } from '../../data/networks'
 
 /**
@@ -114,9 +115,30 @@ export function CommunityChat({
     [],
   )
 
+  // Las alertas reales de la red entran al grupo como avisos, en orden cronológico
+  const { alerts: liveAlerts } = useAlerts({ networkId: network.id, communityId: community.id })
+  const combined = useMemo(() => {
+    const live: ChatMessage[] = liveAlerts.map((alert) => {
+      const date = new Date(alert.created_at)
+      const today = new Date().toDateString() === date.toDateString()
+      return {
+        id: `red-${alert.id}`,
+        kind: 'alert',
+        level: alert.level,
+        participantId: null,
+        author: alert.business_name ?? 'Vecino de la comunidad',
+        text: `${alert.title}. ${alert.description}`,
+        day: today ? 'Hoy' : date.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }),
+        time: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`,
+        at: date.getTime(),
+      }
+    })
+    return live.length ? [...messages, ...live].sort((a, b) => a.at - b.at) : messages
+  }, [messages, liveAlerts])
+
   const visible = useMemo(
-    () => (activeId ? messages.filter((item) => item.participantId === activeId || item.kind === 'alert') : messages),
-    [messages, activeId],
+    () => (activeId ? combined.filter((item) => item.participantId === activeId || item.kind === 'alert') : combined),
+    [combined, activeId],
   )
 
   // desplaza al final cuando llega un mensaje nuevo
@@ -127,7 +149,7 @@ export function CommunityChat({
   }, [visible.length, typing])
 
   const active = chat.participants.find((item) => item.id === activeId) ?? null
-  const alerts = messages.filter((item) => item.kind === 'alert').length
+  const alerts = combined.filter((item) => item.kind === 'alert').length
 
   /** Envía el mensaje del usuario y simula la respuesta de un integrante. */
   const send = () => {

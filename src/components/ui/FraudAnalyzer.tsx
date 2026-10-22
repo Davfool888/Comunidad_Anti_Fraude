@@ -1,7 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Evidence, FraudAnalysis, FraudVerdict } from '../../data/fraud'
-import { analyzeFraud, SOURCE_LABEL, VOICE_SAMPLES } from '../../data/fraud'
-import type { Community } from '../../data/networks'
+import type { FraudVerdict } from '../../data/fraud'
+import { SOURCE_LABEL, VOICE_SAMPLES } from '../../data/fraud'
+import type { Community, CommunityNetwork } from '../../data/networks'
+import { analyzeHybrid, type Stage } from '../../lib/ai/engine'
+import { api, type AnalysisResult, type ApiStatus, type ChatTurn } from '../../lib/api'
+import { AlertComposer, type AlertDraft } from './alerts/AlertComposer'
+import { EntityLookup } from './alerts/EntityLookup'
+import { AnalysisDetails, EmergencyBanner } from './analysis/AnalysisDetails'
+import { ReportModal } from './analysis/ReportModal'
+
+const STAGE_LABEL: Record<Stage, string> = {
+  enviando: 'Analizando el mensaje…',
+  'leyendo-imagenes': 'Leyendo el texto de las capturas…',
+  'analizando-imagenes': 'Buscando armas o amenazas en las imágenes…',
+  analizando: 'Cruzando con los reportes de la comunidad…',
+}
+
+/** Frases para el titular de la alerta a partir del análisis. */
+function alertDraft(analysis: AnalysisResult, original: string): AlertDraft {
+  const identifiers = analysis.entities
+    .filter((entity) => entity.kind === 'enlace')
+    .map((entity) => entity.masked)
+    .join(' ')
+  return {
+    title: `${analysis.category_label}: ${analysis.verdict === 'fraude' ? 'intento de fraude' : 'mensaje sospechoso'}`,
+    description: `${analysis.summary}\n\nMensaje recibido: ${(original || analysis.extracted_text || '').slice(0, 900)}`,
+    category: analysis.category,
+    level: analysis.emergency || analysis.verdict === 'fraude' ? 'danger' : 'warning',
+    identifiers,
+  }
+}
 
 /**
  * Sección «Analizar fraude».
@@ -39,8 +67,29 @@ type Message = {
   role: 'user' | 'assistant'
   text: string
   source: 'voz' | 'texto' | 'evidencia'
-  evidence?: Evidence[]
-  analysis?: FraudAnalysis
+  evidence?: File[]
+  analysis?: AnalysisResult
+  /** Texto original del usuario (para la alerta y la denuncia). */
+  original?: string
+  error?: string
+  /** Respuesta conversacional (preguntas, saludos): sin veredicto. */
+  reply?: string
+  engine?: AnalysisResult['engine']
+}
+
+/** Últimos turnos, para que la IA entienda las preguntas de seguimiento. */
+function historyOf(messages: Message[]): ChatTurn[] {
+  return messages
+    .map((message): ChatTurn | null => {
+      if (message.role === 'user') return message.text ? { role: 'user', text: message.text } : null
+      if (message.reply) return { role: 'assistant', text: message.reply }
+      if (message.analysis) {
+        return { role: 'assistant', text: `${message.analysis.headline}. ${message.analysis.summary}` }
+      }
+      return null
+    })
+    .filter((turn): turn is ChatTurn => turn !== null)
+    .slice(-6)
 }
 
 const VERDICT_STYLE: Record<
@@ -99,16 +148,22 @@ function Waveform({ active }: { active: boolean }) {
 }
 
 export function FraudAnalyzer({
+  network,
   community,
   className = '',
 }: {
+  network: CommunityNetwork
   community?: Community | null
   className?: string
 }) {
   const [mode, setMode] = useState<'voz' | 'texto'>('voz')
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
-  const [evidence, setEvidence] = useState<Evidence[]>([])
+  const [evidence, setEvidence] = useState<File[]>([])
+  const [stage, setStage] = useState<Stage>('enviando')
+  const [status, setStatus] = useState<ApiStatus | null | 'offline'>(null)
+  const [alertFrom, setAlertFrom] = useState<AlertDraft | null>(null)
+  const [reportFor, setReportFor] = useState<Message | null>(null)
   const [recording, setRecording] = useState(false)
   const [interim, setInterim] = useState('')
   const [supported] = useState<boolean | null>(() => getSpeechRecognition() !== null)
@@ -133,43 +188,75 @@ export function FraudAnalyzer({
   )
 
   useEffect(() => {
+    api
+      .status()
+      .then(setStatus)
+      .catch(() => setStatus('offline'))
+  }, [])
+
+  useEffect(() => {
     const list = listRef.current
     if (!list) return
     list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
   }, [messages.length, thinking])
 
-  /** Analiza el mensaje y responde como el asistente de la red. */
-  const send = (text: string, source: 'voz' | 'texto', files: Evidence[]) => {
+  /**
+   * Analiza el mensaje y responde como el asistente de la red.
+   * Usa la IA del servidor y, si no está disponible, el motor del navegador.
+   */
+  const send = async (text: string, source: 'voz' | 'texto', files: File[]) => {
     const clean = text.trim()
-    if (!clean && files.length === 0) return
+    if ((!clean && files.length === 0) || thinking) return
 
     const userMessage: Message = {
       id: `u-${Date.now()}`,
       role: 'user',
-      text: clean,
-      source,
+      text: clean || 'Analiza la evidencia adjunta',
+      source: clean ? source : 'evidencia',
       evidence: files,
     }
+    const history = historyOf(messages)
     setMessages((current) => [...current, userMessage])
     setDraft('')
     setEvidence([])
     setThinking(true)
+    setStage('enviando')
 
-    const analysis = analyzeFraud({ text: clean, evidence: files, source })
-
-    // Respuesta del asistente tras una breve pausa
-    const timer = window.setTimeout(() => {
-      setThinking(false)
-      const answer: Message = {
-        id: `a-${Date.now()}`,
-        role: 'assistant',
-        text: analysis.summary,
-        source: 'texto',
-        analysis,
-      }
+    try {
+      const analysis = await analyzeHybrid({
+        text: clean,
+        source: clean ? source : 'evidencia',
+        files,
+        networkId: network.id,
+        history,
+        onStage: setStage,
+      })
+      const answer: Message =
+        analysis.intent === 'conversacion'
+          ? {
+              id: `a-${Date.now()}`,
+              role: 'assistant',
+              text: analysis.reply ?? '',
+              source: 'texto',
+              reply: analysis.reply ?? '',
+              engine: analysis.engine,
+            }
+          : { id: `a-${Date.now()}`, role: 'assistant', text: analysis.summary, source: 'texto', analysis, original: clean }
       setMessages((current) => [...current, answer])
-    }, 900)
-    timersRef.current.push(timer)
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          text: '',
+          source: 'texto',
+          error: error instanceof Error ? error.message : 'No se pudo analizar el mensaje.',
+        },
+      ])
+    } finally {
+      setThinking(false)
+    }
   }
 
   /* ---------------------------------------------------------------- */
@@ -262,16 +349,9 @@ export function FraudAnalyzer({
 
   const attachFiles = (files: FileList | null) => {
     if (!files) return
-    const added: Evidence[] = [...files].map((file) => ({
-      name: file.name,
-      kind: file.type.startsWith('image/')
-        ? 'imagen'
-        : /\.(txt|md)$/i.test(file.name)
-          ? 'mensaje'
-          : 'documento',
-      size: file.size,
-    }))
-    setEvidence((current) => [...current, ...added])
+    // se copia ya: el FileList se vacía al limpiar el input justo después
+    const added = [...files]
+    setEvidence((current) => [...current, ...added].slice(0, 5))
   }
 
   const lastAnalysis = useMemo(() => {
@@ -369,6 +449,23 @@ export function FraudAnalyzer({
                       ? 'Se transcribe a texto y el asistente responde si es fraude o no.'
                       : 'También puedes adjuntar capturas o el comprobante como evidencia.'}
                   </p>
+                  <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                    {[
+                      '¿Qué puedes hacer?',
+                      '¿Qué es el SIM swap?',
+                      'Me escribieron de Nequi pidiendo el código que me llegó',
+                      '¿Qué hago si ya di mi clave?',
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => send(suggestion, 'texto', [])}
+                        className="rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4a628f] ring-1 ring-[#dbe6f7] transition-colors hover:bg-[#eef4ff]"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -406,12 +503,39 @@ export function FraudAnalyzer({
                 }
 
                 const analysis = message.analysis
-                if (!analysis) return null
+                if (!analysis && message.reply) {
+                  return (
+                    <div key={message.id} className="flex justify-start">
+                      <div className="max-w-[86%]">
+                        <p className="rounded-2xl rounded-bl-md bg-white px-3.5 py-2.5 text-[12.5px] leading-relaxed font-medium whitespace-pre-line text-[#2c4478] shadow-[0_8px_20px_-14px_rgba(30,55,130,.9)]">
+                          {message.reply}
+                        </p>
+                        <p className="mt-1 px-1 text-[9.5px] font-semibold text-[#a3b5d4]">
+                          {message.engine === 'gemini'
+                            ? 'Respondido con IA (Gemini)'
+                            : message.engine === 'claude'
+                              ? 'Respondido con IA (Claude)'
+                              : 'Asistente de la red'}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                }
+                if (!analysis) {
+                  return message.error ? (
+                    <div key={message.id} className="flex justify-start">
+                      <p className="max-w-[92%] rounded-2xl rounded-bl-md bg-white px-3.5 py-2.5 text-[12px] font-semibold text-[#c2274a] shadow-sm">
+                        {message.error}
+                      </p>
+                    </div>
+                  ) : null
+                }
                 const style = VERDICT_STYLE[analysis.verdict]
 
                 return (
                   <div key={message.id} className="flex justify-start">
                     <div className="max-w-[92%]">
+                      {analysis.emergency && <EmergencyBanner />}
                       <div className={`rounded-2xl rounded-bl-md border-l-4 p-3.5 ${style.card}`}>
                         <div className="flex items-center gap-2">
                           <span className={`grid h-6 w-6 place-items-center rounded-lg ${style.badge}`}>
@@ -467,6 +591,27 @@ export function FraudAnalyzer({
                             ))}
                           </ul>
                         </div>
+
+                        <AnalysisDetails analysis={analysis} />
+
+                        {analysis.verdict !== 'limpio' && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setAlertFrom(alertDraft(analysis, message.original ?? ''))}
+                              className="rounded-full bg-[#1d2f57] px-3.5 py-1.5 text-[11px] font-bold text-white transition-transform hover:-translate-y-0.5"
+                            >
+                              Alertar a la red del barrio
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReportFor(message)}
+                              className="rounded-full bg-white px-3.5 py-1.5 text-[11px] font-bold text-[#1d2f57] ring-1 ring-[#dbe6f7] transition-transform hover:-translate-y-0.5"
+                            >
+                              Generar denuncia
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -484,6 +629,7 @@ export function FraudAnalyzer({
                         style={{ animationDelay: `${index * 160}ms` }}
                       />
                     ))}
+                    <span className="ml-2 text-[11px] font-semibold text-[#7a90b8]">{STAGE_LABEL[stage]}</span>
                   </div>
                 </div>
               )}
@@ -603,7 +749,7 @@ export function FraudAnalyzer({
                 ref={fileRef}
                 type="file"
                 multiple
-                accept="image/*,.txt,.md,.pdf"
+                accept="image/*,audio/*,.ogg,.opus,.m4a,.txt,.md"
                 className="hidden"
                 onChange={(event) => {
                   attachFiles(event.target.files)
@@ -732,18 +878,52 @@ export function FraudAnalyzer({
               </div>
             )}
 
-            <div className="mt-5 rounded-2xl border border-[#dbe6f7] bg-white/80 p-3">
-              <p className="text-[9.5px] font-bold tracking-[0.14em] text-[#7a90b8] uppercase">
-                Privacidad
+            <EntityLookup className="mt-5" />
+
+            <div className="mt-3 rounded-2xl border border-[#dbe6f7] bg-white/80 p-3">
+              <p className="flex items-center gap-1.5 text-[9.5px] font-bold tracking-[0.14em] text-[#7a90b8] uppercase">
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    status === null ? 'bg-[#a3b5d4]' : status === 'offline' ? 'bg-[#e9a13b]' : status.ai_enabled ? 'bg-[#2fb87c]' : 'bg-[#5b7cf5]'
+                  }`}
+                />
+                Motor de análisis
               </p>
               <p className="mt-1.5 text-[10.5px] leading-relaxed font-medium text-[#8aa0c4]">
-                El análisis ocurre en tu navegador: ni la transcripción ni las evidencias se envían a
-                ningún servidor.
+                {status === null
+                  ? 'Conectando…'
+                  : status === 'offline'
+                    ? 'Sin servidor: el análisis, la lectura de capturas y la detección de objetos se hacen en su navegador.'
+                    : status.ai_enabled
+                      ? `IA activa (${status.provider === 'gemini' ? 'Gemini' : 'Claude'}): responde preguntas, lee capturas, entiende el contexto y revisa comprobantes, cruzado con los reportes de la comunidad.`
+                      : 'Motor local del servidor: reglas, análisis de enlaces y base comunitaria. Las capturas se leen en su navegador.'}
+              </p>
+              <p className="mt-2 text-[9.5px] font-bold tracking-[0.14em] text-[#7a90b8] uppercase">Privacidad</p>
+              <p className="mt-1 text-[10.5px] leading-relaxed font-medium text-[#8aa0c4]">
+                Los mensajes y capturas que analiza no se guardan: sólo se registra, de forma anónima, el tipo
+                de fraude para las estadísticas del barrio. A las imágenes se les borran los metadatos.
               </p>
             </div>
           </aside>
         </div>
       </div>
+
+      {alertFrom && (
+        <AlertComposer
+          network={network}
+          community={community ?? null}
+          draft={alertFrom}
+          onClose={() => setAlertFrom(null)}
+        />
+      )}
+      {reportFor?.analysis && (
+        <ReportModal
+          analysis={reportFor.analysis}
+          original={reportFor.original ?? ''}
+          place={community ? `${community.name}, ${network.neighborhood} (Bogotá)` : `${network.neighborhood} (Bogotá)`}
+          onClose={() => setReportFor(null)}
+        />
+      )}
     </section>
   )
 }

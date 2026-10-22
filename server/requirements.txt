@@ -1,0 +1,15 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+anthropic>=2.1
+google-genai>=2.32
+python-multipart>=0.0.9
+python-dotenv>=1.0
+pillow>=11.0
+
+# Pruebas
+pytest>=8.0
+httpx>=0.27
+
+# Opcional: transcripción de notas de voz (WhatsApp .ogg/.opus, .mp3, .m4a)
+# en el servidor. Pesa ~200 MB con el modelo «base».
+#   pip install faster-whisper
