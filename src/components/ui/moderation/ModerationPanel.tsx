@@ -5,6 +5,7 @@ import {
   ApiError,
   ApiUnavailable,
   moderationApi,
+  type ChatMessage,
   type CommunityAlert,
   type Merchant,
   type Modality,
@@ -28,7 +29,7 @@ import { TrendCharts } from './TrendCharts'
  */
 
 const TOKEN_KEY = 'red-segura:moderator-token'
-type Tab = 'alertas' | 'comercios' | 'tendencias' | 'retos'
+type Tab = 'alertas' | 'comercios' | 'chat' | 'tendencias' | 'retos'
 
 function readToken() {
   try {
@@ -108,7 +109,7 @@ export function ModerationPanel() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-full bg-white/80 p-1 ring-1 ring-[#dbe6f7]">
-            {(['alertas', 'comercios', 'tendencias', 'retos'] as const).map((option) => (
+            {(['alertas', 'comercios', 'chat', 'tendencias', 'retos'] as const).map((option) => (
               <button
                 key={option}
                 type="button"
@@ -130,6 +131,7 @@ export function ModerationPanel() {
       {tab === 'alertas' && <AlertsTab token={token} />}
       {tab === 'comercios' && <MerchantsTab token={token} />}
       {tab === 'tendencias' && <TrendsTab />}
+      {tab === 'chat' && <ChatTab token={token} />}
       {tab === 'retos' && <ChallengesTab token={token} />}
     </div>
   )
@@ -230,6 +232,9 @@ function MerchantsTab({ token }: { token: string }) {
   const [error, setError] = useState('')
   const [form, setForm] = useState({ name: '', business: '', nit: '', network_id: NETWORKS[0]?.id ?? '' })
   const [sent, setSent] = useState('')
+  // código recién generado: se muestra una sola vez para entregarlo al comercio
+  const [issued, setIssued] = useState<{ name: string; code: string } | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -243,9 +248,23 @@ function MerchantsTab({ token }: { token: string }) {
     void load()
   }, [load])
 
-  const review = async (merchant: Merchant, status: Merchant['status']) => {
+  const review = async (merchant: Merchant, status: Merchant['status'], newCode = false) => {
+    if (newCode && !window.confirm(`¿Generar un código nuevo para «${merchant.name}»? El anterior dejará de funcionar.`)) return
     try {
-      const updated = await client.reviewMerchant(merchant.id, status)
+      const updated = await client.reviewMerchant(merchant.id, status, newCode)
+      setMerchants((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+      if (updated.access_code) {
+        setIssued({ name: updated.name, code: updated.access_code })
+        setCopied(false)
+      }
+    } catch (err) {
+      setError(errorText(err))
+    }
+  }
+
+  const reviewCamera = async (merchant: Merchant, approved: boolean) => {
+    try {
+      const updated = await client.reviewCamera(merchant.id, approved)
       setMerchants((current) => current.map((item) => (item.id === updated.id ? updated : item)))
     } catch (err) {
       setError(errorText(err))
@@ -265,13 +284,39 @@ function MerchantsTab({ token }: { token: string }) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      {issued && (
+        <div className="rounded-2xl border border-[#a8dfc0] bg-[#eefbf3] p-4 lg:col-span-2">
+          <p className="text-[12.5px] font-extrabold text-[#1d7a53]">Código de acceso de «{issued.name}»</p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <code className="rounded-xl bg-white px-4 py-2 font-mono text-[18px] font-extrabold tracking-[0.14em] text-[#1d2f57] ring-1 ring-[#a8dfc0]">
+              {issued.code}
+            </code>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(issued.code).then(() => setCopied(true))
+              }}
+              className={secondaryButton}
+            >
+              {copied ? '✓ Copiado' : 'Copiar'}
+            </button>
+            <button type="button" onClick={() => setIssued(null)} className="text-[11.5px] font-bold text-[#6b81ad]">
+              Ya lo entregué
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] font-medium text-[#2f7a57]">
+            Se muestra sólo esta vez. Entréguelo al comercio en persona o por una llamada al número que verificó; nunca por el
+            chat de la red. Si se pierde, genere uno nuevo.
+          </p>
+        </div>
+      )}
       <div className="overflow-hidden rounded-2xl border border-[#dbe6f7] bg-white">
         <table className="w-full text-left text-[11.5px]">
           <thead className="bg-[#f7faff] text-[10px] font-extrabold tracking-[0.1em] text-[#7a90b8] uppercase">
             <tr>
               <th className="px-3 py-2">Comercio</th>
               <th className="px-3 py-2">Localidad</th>
-              <th className="px-3 py-2">NIT</th>
+              <th className="px-3 py-2">NIT / contacto</th>
               <th className="px-3 py-2">Estado</th>
               <th className="px-3 py-2" />
             </tr>
@@ -289,19 +334,63 @@ function MerchantsTab({ token }: { token: string }) {
                 <td className="px-3 py-2">
                   <b>{merchant.name}</b>
                   <span className="block text-[10px] text-[#8aa0c4]">{merchant.business}</span>
+                  {merchant.camera_mode === 'ip' && merchant.camera_url && (
+                    <span className="mt-1 block text-[10px]">
+                      📹 Cámara IP: <code className="break-all text-[#1d2f57]">{merchant.camera_url}</code>{' '}
+                      <span className="font-bold text-[#8aa0c4]">({merchant.camera_url_status})</span>
+                      {merchant.camera_url_status !== 'aprobada' && (
+                        <button type="button" onClick={() => reviewCamera(merchant, true)} className="ml-2 font-bold text-[#1d7a53]">
+                          Aprobar cámara
+                        </button>
+                      )}
+                      {merchant.camera_url_status !== 'rechazada' && (
+                        <button type="button" onClick={() => reviewCamera(merchant, false)} className="ml-2 font-bold text-[#c2274a]">
+                          Rechazar cámara
+                        </button>
+                      )}
+                    </span>
+                  )}
+                  {merchant.camera_mode === 'dispositivo' && Boolean(merchant.camera_enabled) && (
+                    <span className="mt-1 block text-[10px] text-[#8aa0c4]">📹 Cámara: celular o tablet del local</span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   {NETWORKS.find((network) => network.id === merchant.network_id)?.neighborhood ?? merchant.network_id}
                 </td>
-                <td className="px-3 py-2">{merchant.nit ?? '—'}</td>
-                <td className="px-3 py-2 capitalize">{merchant.status}</td>
+                <td className="px-3 py-2">
+                  {merchant.nit ?? '—'}
+                  <span className="block text-[10px] text-[#8aa0c4]">{merchant.contact ?? 'sin contacto'}</span>
+                </td>
+                <td className="px-3 py-2 capitalize">
+                  {merchant.status}
+                  {merchant.status === 'verificado' && (
+                    <span className="block text-[10px] normal-case text-[#8aa0c4]">
+                      {merchant.has_code ? 'con código activo' : 'sin código'}
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
-                  <button type="button" onClick={() => review(merchant, 'verificado')} className="mr-1 font-bold text-[#1d7a53]">
-                    Aprobar
-                  </button>
-                  <button type="button" onClick={() => review(merchant, 'rechazado')} className="font-bold text-[#c2274a]">
-                    Rechazar
-                  </button>
+                  {merchant.status === 'verificado' ? (
+                    <>
+                      <button type="button" onClick={() => review(merchant, 'verificado', true)} className="mr-2 font-bold text-[#5b7cf5]">
+                        Nuevo código
+                      </button>
+                      <button type="button" onClick={() => review(merchant, 'rechazado')} className="font-bold text-[#c2274a]">
+                        Revocar
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => review(merchant, 'verificado')} className="mr-2 font-bold text-[#1d7a53]">
+                        Aprobar
+                      </button>
+                      {merchant.status !== 'rechazado' && (
+                        <button type="button" onClick={() => review(merchant, 'rechazado')} className="font-bold text-[#c2274a]">
+                          Rechazar
+                        </button>
+                      )}
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -327,6 +416,81 @@ function MerchantsTab({ token }: { token: string }) {
         </button>
         {sent && <p className="text-[11px] font-semibold text-[#1d7a53]">{sent}</p>}
       </div>
+    </div>
+  )
+}
+
+function ChatTab({ token }: { token: string }) {
+  const client = useMemo(() => moderationApi(token), [token])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setMessages(await client.chat())
+      setError('')
+    } catch (err) {
+      setError(errorText(err))
+    }
+  }, [client])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const toggle = async (message: ChatMessage) => {
+    try {
+      const updated = await client.reviewChat(message.id, !message.hidden)
+      setMessages((current) => current.map((item) => (item.id === updated.id ? { ...item, hidden: updated.hidden } : item)))
+    } catch (err) {
+      setError(errorText(err))
+    }
+  }
+
+  return (
+    <div className="max-w-[860px]">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-[12px] font-medium text-[#6b81ad]">
+          Mensajes recientes de todos los barrios. Oculte los abusivos, los que acusen sin pruebas o los que difundan enlaces
+          peligrosos.
+        </p>
+        <button type="button" onClick={load} className="shrink-0 text-[11px] font-bold text-[#5b7cf5]">
+          Actualizar
+        </button>
+      </div>
+      {error && <p className="mb-3 text-[12px] font-semibold text-[#c2274a]">{error}</p>}
+      {messages.length === 0 && !error && <p className="text-[12px] font-medium text-[#8aa0c4]">Aún no hay mensajes en el chat.</p>}
+      <ul className="space-y-2">
+        {messages.map((message) => (
+          <li
+            key={message.id}
+            className={`flex items-start gap-3 rounded-2xl border bg-white p-3 ${message.hidden ? 'border-[#f4c4cf] opacity-60' : 'border-[#dbe6f7]'}`}
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-extrabold text-[#1d2f57]">
+                {message.author}
+                {message.verified ? ' · ✓ comercio' : ' · vecino'}
+                <span className="ml-2 font-semibold text-[#8aa0c4]">
+                  {message.community_id} · {new Date(message.created_at).toLocaleString('es-CO')}
+                </span>
+              </p>
+              <p className="mt-1 text-[12px] font-medium break-words whitespace-pre-line text-[#2c4478]">{message.text}</p>
+              {message.risky_links.length > 0 && (
+                <p className="mt-1 text-[10.5px] font-bold text-[#c2274a]">
+                  ⚠ Enlaces de riesgo: {message.risky_links.map((link) => link.domain).join(', ')}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => toggle(message)}
+              className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white ${message.hidden ? 'bg-[#5b7cf5]' : 'bg-[#e23b5f]'}`}
+            >
+              {message.hidden ? 'Mostrar' : 'Ocultar'}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

@@ -72,7 +72,7 @@ export function CommunityChatDrawer({
             Chat del barrio {community.name}
           </p>
           <p className="truncate text-[10px] font-semibold text-[#8aa0c4]">
-            {network.neighborhood} · {network.commune} · {community.stats.merchants} comercios
+            {network.neighborhood} · conversación en vivo de comercios y vecinos
           </p>
         </div>
 

@@ -1,6 +1,10 @@
 import { useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
-/** Ventana modal con fondo velado. Se cierra con Escape o pulsando fuera. */
+/**
+ * Ventana modal con fondo velado. Se cierra con Escape o pulsando fuera.
+ * Se dibuja en <body> (portal) para quedar siempre por encima del mapa y la cabecera.
+ */
 export function Modal({
   title,
   subtitle,
@@ -27,7 +31,7 @@ export function Modal({
     }
   }, [onClose])
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[2000] flex items-start justify-center overflow-y-auto bg-[#1d2f57]/40 px-4 py-10 backdrop-blur-sm"
       onMouseDown={(event) => {
@@ -57,7 +61,8 @@ export function Modal({
         </header>
         <div className="px-5 py-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

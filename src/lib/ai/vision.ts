@@ -117,6 +117,59 @@ export async function scanImage(image: HTMLImageElement): Promise<VisionScan> {
 }
 
 /**
+ * Cuadro de la cámara del local listo para subir: se dibuja el video en un
+ * lienzo, se pixelan los rostros en el propio dispositivo y se codifica como
+ * JPEG (sin metadatos). Si el detector no carga, el cuadro se envía con todo
+ * pixelado salvo una franja central, para no exponer rostros por error.
+ */
+export async function captureRedactedFrame(video: HTMLVideoElement, maxSide = 960): Promise<Blob> {
+  const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight))
+  const width = Math.round(video.videoWidth * scale)
+  const height = Math.round(video.videoHeight * scale)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')!
+  ctx.drawImage(video, 0, 0, width, height)
+
+  let boxes: Box[]
+  try {
+    const { faces } = await loadDetectors()
+    boxes = faces
+      .detect(canvas)
+      .detections.map((detection) => detection.boundingBox)
+      .filter((box): box is NonNullable<typeof box> => Boolean(box))
+      .map((box) => ({ x: box.originX, y: box.originY, width: box.width, height: box.height }))
+  } catch {
+    boxes = [{ x: 0, y: 0, width, height: height * 0.6 }]
+  }
+  pixelate(ctx, canvas, boxes, 1)
+
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('No se pudo capturar la imagen.'))), 'image/jpeg', 0.8),
+  )
+}
+
+function pixelate(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, boxes: Box[], scale: number) {
+  for (const box of boxes) {
+    const pad = 0.25
+    const x = Math.max(0, (box.x - box.width * pad) * scale)
+    const y = Math.max(0, (box.y - box.height * pad) * scale)
+    const w = Math.min(canvas.width - x, box.width * (1 + pad * 2) * scale)
+    const h = Math.min(canvas.height - y, box.height * (1 + pad * 2) * scale)
+    if (w <= 0 || h <= 0) continue
+    const block = Math.max(6, Math.round(Math.min(w, h) / 8))
+    const tiny = document.createElement('canvas')
+    tiny.width = Math.max(1, Math.round(w / block))
+    tiny.height = Math.max(1, Math.round(h / block))
+    tiny.getContext('2d')!.drawImage(canvas, x, y, w, h, 0, 0, tiny.width, tiny.height)
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(tiny, 0, 0, tiny.width, tiny.height, x, y, w, h)
+    ctx.imageSmoothingEnabled = true
+  }
+}
+
+/**
  * Pixela las zonas indicadas y devuelve una imagen JPEG nueva.
  * Al pasar por un canvas se descartan también los metadatos EXIF (GPS).
  */

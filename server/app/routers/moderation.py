@@ -19,11 +19,12 @@ from pydantic import BaseModel, Field
 
 from ..config import settings
 from ..db import get_db, now_iso, row_to_dict
-from ..security import clean_text, require_moderator
+from ..security import clean_text, code_hash, generate_access_code, require_moderator
 from ..seed import CATEGORIES
 from ..services import ai
 from ..services.events import broadcaster
-from .alerts import public_alert
+from .alerts import enrich
+from .chat import public_message
 
 router = APIRouter(prefix="/api/moderation", tags=["moderación"], dependencies=[Depends(require_moderator)])
 
@@ -42,7 +43,7 @@ def alerts(db: Annotated[sqlite3.Connection, Depends(get_db)], status: str | Non
         params.append(status)
     query += " ORDER BY CASE status WHEN 'pendiente' THEN 0 WHEN 'sin_verificar' THEN 1 ELSE 2 END, created_at DESC LIMIT ?"
     params.append(max(1, min(limit, 500)))
-    return [public_alert(row) for row in db.execute(query, params).fetchall()]
+    return [enrich(db, row) for row in db.execute(query, params).fetchall()]
 
 
 class AlertReview(BaseModel):
@@ -63,7 +64,7 @@ def review_alert(alert_id: int, body: AlertReview, db: Annotated[sqlite3.Connect
     if body.status == "rechazada":
         # Una alerta falsa no debe seguir marcando a nadie como estafador
         db.execute("DELETE FROM reported_entities WHERE alert_id = ?", (alert_id,))
-    alert = public_alert(db.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
+    alert = enrich(db, db.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
     broadcaster.publish("alert_removed" if body.status == "rechazada" else "alert_update", alert)
     return alert
 
@@ -75,21 +76,74 @@ def merchants(db: Annotated[sqlite3.Connection, Depends(get_db)], status: str | 
     if status:
         query += " WHERE status = ?"
         params.append(status)
-    return [dict(row) for row in db.execute(query + " ORDER BY created_at DESC", params).fetchall()]
+    rows = db.execute(query + " ORDER BY created_at DESC", params).fetchall()
+    # el hash del código nunca sale del servidor; sólo se indica si ya tiene uno
+    return [{**{k: row[k] for k in row.keys() if k != "access_code_hash"}, "has_code": bool(row["access_code_hash"])} for row in rows]
 
 
 class MerchantReview(BaseModel):
     status: Literal["verificado", "rechazado", "pendiente"]
+    # genera un código nuevo (p. ej. si el comercio lo perdió); el anterior deja de servir
+    new_code: bool = False
 
 
 @router.patch("/merchants/{merchant_id}")
 def review_merchant(merchant_id: int, body: MerchantReview, db: Annotated[sqlite3.Connection, Depends(get_db)]) -> dict:
-    updated = db.execute(
-        "UPDATE merchants SET status = ?, reviewed_at = ? WHERE id = ?", (body.status, now_iso(), merchant_id)
-    ).rowcount
-    if not updated:
+    row = db.execute("SELECT * FROM merchants WHERE id = ?", (merchant_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Comercio no encontrado.")
-    return dict(db.execute("SELECT * FROM merchants WHERE id = ?", (merchant_id,)).fetchone())
+    access_code = None
+    if body.status == "verificado" and (body.new_code or not row["access_code_hash"]):
+        # El código se muestra UNA sola vez: el moderador lo entrega al comercio
+        access_code = generate_access_code()
+        db.execute("UPDATE merchants SET access_code_hash = ? WHERE id = ?", (code_hash(access_code), merchant_id))
+    if body.status != "verificado":
+        db.execute("UPDATE merchants SET access_code_hash = NULL WHERE id = ?", (merchant_id,))  # revoca el acceso
+    db.execute("UPDATE merchants SET status = ?, reviewed_at = ? WHERE id = ?", (body.status, now_iso(), merchant_id))
+    updated = db.execute("SELECT * FROM merchants WHERE id = ?", (merchant_id,)).fetchone()
+    result = {k: updated[k] for k in updated.keys() if k != "access_code_hash"}
+    return {**result, "has_code": bool(updated["access_code_hash"]), "access_code": access_code}
+
+
+class CameraReview(BaseModel):
+    approved: bool
+
+
+@router.patch("/merchants/{merchant_id}/camera")
+def review_camera(merchant_id: int, body: CameraReview, db: Annotated[sqlite3.Connection, Depends(get_db)]) -> dict:
+    """Aprueba la dirección de la cámara IP de un comercio (el moderador la revisa antes de usarse)."""
+    row = db.execute("SELECT camera_url FROM merchants WHERE id = ?", (merchant_id,)).fetchone()
+    if not row or not row["camera_url"]:
+        raise HTTPException(404, "El comercio no tiene cámara IP configurada.")
+    db.execute(
+        "UPDATE merchants SET camera_url_status = ? WHERE id = ?",
+        ("aprobada" if body.approved else "rechazada", merchant_id),
+    )
+    updated = db.execute("SELECT * FROM merchants WHERE id = ?", (merchant_id,)).fetchone()
+    return {**{k: updated[k] for k in updated.keys() if k != "access_code_hash"}, "has_code": bool(updated["access_code_hash"])}
+
+
+@router.get("/chat")
+def chat_messages(db: Annotated[sqlite3.Connection, Depends(get_db)], limit: int = 100) -> list[dict]:
+    rows = db.execute(
+        "SELECT * FROM chat_messages ORDER BY created_at DESC LIMIT ?", (max(1, min(limit, 500)),)
+    ).fetchall()
+    return [{**public_message(row), "hidden": bool(row["hidden"])} for row in rows]
+
+
+class ChatReview(BaseModel):
+    hidden: bool
+
+
+@router.patch("/chat/{message_id}")
+def review_chat(message_id: int, body: ChatReview, db: Annotated[sqlite3.Connection, Depends(get_db)]) -> dict:
+    updated = db.execute("UPDATE chat_messages SET hidden = ? WHERE id = ?", (int(body.hidden), message_id)).rowcount
+    if not updated:
+        raise HTTPException(404, "Mensaje no encontrado.")
+    row = db.execute("SELECT * FROM chat_messages WHERE id = ?", (message_id,)).fetchone()
+    message = public_message(row)
+    broadcaster.publish("chat_removed" if body.hidden else "chat", message)
+    return {**message, "hidden": body.hidden}
 
 
 def _slugify(text: str) -> str:

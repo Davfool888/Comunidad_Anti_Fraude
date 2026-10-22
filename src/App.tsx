@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react'
 import { findNetwork } from './data/networks'
+import { AlertNotifier } from './components/ui/alerts/AlertNotifier'
 import { AlertsPanel } from './components/ui/alerts/AlertsPanel'
+import { CameraStationHost } from './components/ui/alerts/CameraSettingsPanel'
 import { CommunityChatDrawer } from './components/ui/CommunityChatDrawer'
+import { CommunityInsights } from './components/ui/CommunityInsights'
 import { CommunityStage } from './components/ui/CommunityStage'
 import { EducationProvider } from './components/ui/education/EducationProvider'
-import { EscudoInteligencia } from './components/ui/EscudoInteligencia'
 import { FraudAnalyzer } from './components/ui/FraudAnalyzer'
 import { LearningCenter } from './components/ui/learning/LearningCenter'
 import { LearningProvider } from './components/ui/learning/LearningProvider'
 import { ModerationPanel } from './components/ui/moderation/ModerationPanel'
 import { NetworkHeader, type AppView } from './components/ui/NetworkHeader'
 import { NetworkSwitcher } from './components/ui/NetworkSwitcher'
-import { CommunityStatsSection, EducationSection, StaffSection } from './components/ui/SidebarSections'
 
 /**
  * La aplicación se organiza en **tres ventanas**:
@@ -63,13 +64,13 @@ export default function App() {
             view={view}
             onView={setView}
             onOpenChat={openChat}
-            tone={view === 'comunidades' ? 'cielo' : 'claro'}
+            tone="claro"
             switcher={
               <NetworkSwitcher
                 activeNetwork={network}
                 activeCommunity={community ?? undefined}
                 onEnter={enterNetwork}
-                tone={view === 'comunidades' ? 'cielo' : 'claro'}
+                tone="claro"
               />
             }
           />
@@ -103,19 +104,19 @@ export default function App() {
                 <div className="mb-14">
                   <AlertsPanel network={network} community={community} />
                 </div>
-                <div className="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1fr)_400px] xl:gap-8">
-                  {/* columna principal */}
-                  <div>
-                    <EscudoInteligencia />
-                  </div>
-
-                  {/* columna lateral del mockup */}
-                  <aside className="flex flex-col gap-9">
-                    <StaffSection />
-                    <CommunityStatsSection />
-                    <EducationSection />
-                  </aside>
-                </div>
+                {/* el barrio en cifras reales y accesos directos */}
+                <CommunityInsights
+                  network={network}
+                  community={community}
+                  onAnalyze={() => {
+                    setView('fraude')
+                    window.scrollTo({ top: 0 })
+                  }}
+                  onLearn={() => {
+                    setView('educacion')
+                    window.scrollTo({ top: 0 })
+                  }}
+                />
               </div>
             </>
           )}
@@ -132,6 +133,10 @@ export default function App() {
               onRestore={() => setChatMinimized(false)}
             />
           )}
+
+          {/* avisos de alertas nuevas (con sonido) en cualquier ventana y modo cámara del local */}
+          <AlertNotifier network={network} community={community} />
+          <CameraStationHost />
 
           <div aria-hidden="true" className="grain" />
         </main>

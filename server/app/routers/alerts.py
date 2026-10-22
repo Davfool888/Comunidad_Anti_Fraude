@@ -9,15 +9,23 @@ import secrets
 import sqlite3
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..config import settings
 from ..db import get_db, now_iso, row_to_dict
-from ..security import clean_text, limit_writes, pseudonym, redact_personal_data, reporter_hash
+from ..security import (
+    clean_text,
+    limit_writes,
+    merchant_from_code,
+    pseudonym,
+    redact_personal_data,
+    reporter_hash,
+)
 from ..seed import CATEGORIES
-from ..services import ai
+from ..services import ai, camera
 from ..services.entities import extract_entities
+from ..services import push
 from ..services.events import broadcaster
 from ..services.images import InvalidImage, sanitize_image
 
@@ -33,11 +41,26 @@ def public_alert(row: sqlite3.Row | dict) -> dict:
     data["image_url"] = f"/api/uploads/{data['image_path']}" if data.get("image_path") else None
     data.pop("image_path", None)
     data["category_label"] = CATEGORIES.get(data.get("category", "otro"), CATEGORIES["otro"])
+    # Sólo un comercio con código de acceso válido publica con su nombre
+    data["merchant_verified"] = bool(data.pop("merchant_id", None))
+    data.pop("affected_merchant_id", None)
     return data
+
+
+def enrich(db: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    """Alerta pública + comercio afectado y estado de su cámara."""
+    return {**public_alert(row), **camera.camera_info(db, row)}
+
+
+def confirmed_ids(db: sqlite3.Connection, request: Request) -> set[int]:
+    """Alertas en las que esta persona ya marcó «a mí también»."""
+    rows = db.execute("SELECT alert_id FROM alert_confirmations WHERE reporter_hash = ?", (reporter_hash(request),))
+    return {row["alert_id"] for row in rows}
 
 
 @router.get("/alerts")
 def list_alerts(
+    request: Request,
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     network_id: str | None = None,
     community_id: str | None = None,
@@ -53,7 +76,10 @@ def list_alerts(
         params.append(community_id)
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(max(1, min(limit, 200)))
-    return [public_alert(row) for row in db.execute(query, params).fetchall()]
+    mine = confirmed_ids(db, request)
+    return [
+        {**enrich(db, row), "confirmed_by_me": row["id"] in mine} for row in db.execute(query, params).fetchall()
+    ]
 
 
 @router.post("/alerts", dependencies=[Depends(limit_writes)], status_code=201)
@@ -66,14 +92,26 @@ async def create_alert(
     level: Annotated[str, Form()] = "warning",
     category: Annotated[str, Form()] = "otro",
     community_id: Annotated[str | None, Form(max_length=64)] = None,
-    business_name: Annotated[str | None, Form(max_length=120)] = None,
     lat: Annotated[float | None, Form()] = None,
     lng: Annotated[float | None, Form()] = None,
     identifiers: Annotated[str, Form(max_length=1000)] = "",
     client_threats: Annotated[str, Form(max_length=4000)] = "",
     image: Annotated[UploadFile | None, File()] = None,
+    affected_merchant_id: Annotated[int | None, Form()] = None,
+    x_merchant_code: Annotated[str | None, Header()] = None,
 ) -> dict:
     level = level if level in {"danger", "warning", "info"} else "warning"
+    # El nombre del comercio no se acepta del formulario: sale del código verificado
+    merchant = merchant_from_code(db, x_merchant_code)
+    business_name = merchant["name"] if merchant else None
+    # Comercio afectado: el elegido (si es un comercio verificado de esta localidad) o quien reporta
+    affected = None
+    if affected_merchant_id:
+        affected = db.execute(
+            "SELECT * FROM merchants WHERE id = ? AND status = 'verificado' AND network_id = ?",
+            (affected_merchant_id, network_id),
+        ).fetchone()
+    affected = affected or merchant
     category = category if category in CATEGORIES else "otro"
     title = redact_personal_data(clean_text(title, 140))
     description = redact_personal_data(clean_text(description, 2000))
@@ -124,13 +162,16 @@ async def create_alert(
     status = "sin_verificar" if settings.alerts_auto_publish else "pendiente"
     created = now_iso()
     cursor = db.execute(
-        """INSERT INTO alerts (network_id, community_id, business_name, lat, lng, level, category, title,
-                               description, entities, image_path, threat, status, reporter_hash, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO alerts (network_id, community_id, business_name, merchant_id, affected_merchant_id, lat, lng,
+                               level, category, title, description, entities, image_path, threat, status,
+                               reporter_hash, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             clean_text(network_id, 64),
             clean_text(community_id, 64) or None,
-            clean_text(business_name, 120) or None,
+            business_name,
+            merchant["id"] if merchant else None,
+            affected["id"] if affected else None,
             lat,
             lng,
             level,
@@ -152,12 +193,15 @@ async def create_alert(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (entity.kind, pseudonym(entity.value), entity.masked, entity.domain, category, alert_id, network_id, created),
         )
+    # evidencia: las imágenes de la cámara del afectado en el momento de la alerta
+    await asyncio.to_thread(camera.save_evidence, db, alert_id, affected)
     db.commit()
 
-    alert = public_alert(db.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
+    alert = enrich(db, db.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
     if status in PUBLIC_STATUSES:
         broadcaster.publish("alert", alert)
-    return alert
+        push.notify_alert(alert)  # aviso al celular aunque la página esté cerrada
+    return {**alert, "confirmed_by_me": False}
 
 
 @router.post("/alerts/{alert_id}/confirm", dependencies=[Depends(limit_writes)])
@@ -172,9 +216,10 @@ def confirm_alert(alert_id: int, request: Request, db: Annotated[sqlite3.Connect
     ).rowcount
     if inserted:
         db.execute("UPDATE alerts SET confirmations = confirmations + 1 WHERE id = ?", (alert_id,))
-    alert = public_alert(db.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
-    broadcaster.publish("alert_update", alert)
-    return alert
+    alert = enrich(db, db.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
+    if inserted:
+        broadcaster.publish("alert_update", alert)  # el contador nuevo llega a todos en vivo
+    return {**alert, "confirmed_by_me": True}
 
 
 @router.get("/alerts/stream")
@@ -210,7 +255,12 @@ def get_upload(name: str, db: Annotated[sqlite3.Connection, Depends(get_db)]) ->
     # Nombre estricto: impide recorrer directorios (../)
     if not _UPLOAD_NAME.match(name):
         raise HTTPException(404, "No encontrado.")
-    row = db.execute("SELECT status FROM alerts WHERE image_path = ?", (name,)).fetchone()
+    row = db.execute(
+        """SELECT status FROM alerts WHERE image_path = ?
+           UNION ALL
+           SELECT a.status FROM alert_evidence e JOIN alerts a ON a.id = e.alert_id WHERE e.file = ?""",
+        (name, name),
+    ).fetchone()
     if not row or row["status"] == "rechazada":
         raise HTTPException(404, "No encontrado.")
     path = settings.uploads_dir / name

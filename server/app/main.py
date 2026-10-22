@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import init_db
-from .routers import alerts, analyze, community, moderation
+from .routers import alerts, analyze, camera, chat, community, moderation
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("red_segura")
@@ -40,7 +40,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Content-Type", "X-Moderator-Token"],
+    allow_headers=["Content-Type", "X-Moderator-Token", "X-Merchant-Code"],
 )
 
 
@@ -50,7 +50,7 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(self), microphone=(self)")
     if request.url.path.startswith("/api/") and "Cache-Control" not in response.headers:
         response.headers["Cache-Control"] = "no-store"
     return response
@@ -59,6 +59,8 @@ async def security_headers(request: Request, call_next):
 app.include_router(analyze.router)
 app.include_router(alerts.router)
 app.include_router(community.router)
+app.include_router(chat.router)
+app.include_router(camera.router)
 app.include_router(moderation.router)
 
 

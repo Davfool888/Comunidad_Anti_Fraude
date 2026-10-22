@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Community, CommunityNetwork } from '../../../data/networks'
 import { addLocalAlert } from '../../../lib/alertsStore'
-import { api, ApiUnavailable, CATEGORIES, type CommunityAlert, type Level, type Threats } from '../../../lib/api'
+import { useMerchant } from '../../../lib/merchantSession'
+import { api, ApiUnavailable, CATEGORIES, type CommunityAlert, type Level, type Threats, type VerifiedMerchant } from '../../../lib/api'
 import type { VisionScan } from '../../../lib/ai/vision'
 import { fieldClass, labelClass, Modal, primaryButton, secondaryButton } from '../Modal'
 
@@ -46,7 +47,20 @@ export function AlertComposer({
   const [title, setTitle] = useState(draft?.title ?? '')
   const [description, setDescription] = useState(draft?.description ?? '')
   const [identifiers, setIdentifiers] = useState(draft?.identifiers ?? '')
-  const [business, setBusiness] = useState('')
+  const merchant = useMerchant()
+  // comercios verificados del barrio: se puede indicar cuál fue el afectado
+  const [merchants, setMerchants] = useState<VerifiedMerchant[]>([])
+  const [affectedId, setAffectedId] = useState('')
+  useEffect(() => {
+    let alive = true
+    api
+      .verifiedMerchants(network.id)
+      .then((items) => alive && setMerchants(items.filter((item) => !community || !item.community_id || item.community_id === community.id)))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [network.id, community])
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [image, setImage] = useState<File | null>(null)
   const [scan, setScan] = useState<VisionScan | null>(null)
@@ -135,7 +149,6 @@ export function AlertComposer({
       const alert = await api.createAlert({
         networkId: network.id,
         communityId: community?.id,
-        businessName: business || undefined,
         lat: coords?.lat ?? community?.lat,
         lng: coords?.lng ?? community?.lng,
         level,
@@ -146,6 +159,7 @@ export function AlertComposer({
         // si el navegador no pudo procesarla, el servidor igual elimina el EXIF
         image: image ? (preview?.blob ?? image) : null,
         clientThreats: threats,
+        affectedMerchantId: affectedId ? Number(affectedId) : undefined,
       })
       addLocalAlert(alert)
       onCreated?.(alert)
@@ -153,7 +167,7 @@ export function AlertComposer({
     } catch (err) {
       setError(
         err instanceof ApiUnavailable
-          ? 'El servidor de la red no está disponible. Inicie el backend para publicar alertas.'
+          ? 'No pudimos conectarnos con la red. Revise su internet e intente de nuevo; su alerta no se ha perdido.'
           : err instanceof Error
             ? err.message
             : 'No se pudo publicar la alerta.',
@@ -203,18 +217,44 @@ export function AlertComposer({
               ))}
             </select>
           </label>
-          <label>
+          <div>
             <span className={labelClass}>Reporta</span>
-            <select value={business} onChange={(event) => setBusiness(event.target.value)} className={fieldClass}>
-              <option value="">Vecino de la comunidad</option>
-              {community?.businesses.map((item) => (
-                <option key={item.id} value={item.name}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            {merchant ? (
+              <p className="flex h-[42px] items-center gap-2 rounded-xl bg-[#e4f7ee] px-3.5 text-[12.5px] font-bold text-[#1d7a53]">
+                ✓ {merchant.name} <span className="font-semibold text-[#2f9a6b]">· comercio verificado</span>
+              </p>
+            ) : (
+              <p className="flex h-[42px] items-center rounded-xl bg-[#f7faff] px-3.5 text-[12px] font-semibold text-[#6b81ad] ring-1 ring-[#dbe6f7]">
+                Vecino de la comunidad
+              </p>
+            )}
+          </div>
         </div>
+
+        {merchants.length > 0 && (
+          <label>
+            <span className={labelClass}>Comercio afectado</span>
+            <select
+              value={affectedId}
+              onChange={(event) => setAffectedId(event.target.value)}
+              className={fieldClass}
+            >
+              <option value="">{merchant ? `${merchant.name} (mi comercio)` : 'Ningún comercio en particular'}</option>
+              {merchants
+                .filter((item) => item.id !== merchant?.id)
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.business}
+                    {item.has_camera ? ' · 📹 con cámara' : ''}
+                  </option>
+                ))}
+            </select>
+            <span className="mt-1 block text-[10px] font-medium text-[#8aa0c4]">
+              Si el comercio afectado tiene cámara, se mostrará en vivo a la comunidad durante{' '}
+              la alerta y se avisará al comercio con una alarma.
+            </span>
+          </label>
+        )}
 
         <label>
           <span className={labelClass}>Título</span>

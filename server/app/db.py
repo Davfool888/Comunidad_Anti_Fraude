@@ -87,7 +87,45 @@ CREATE TABLE IF NOT EXISTS merchants (
     status       TEXT NOT NULL DEFAULT 'pendiente'
                  CHECK (status IN ('pendiente', 'verificado', 'rechazado')),
     created_at   TEXT NOT NULL,
-    reviewed_at  TEXT
+    reviewed_at  TEXT,
+    -- HMAC del código de acceso que se entrega al comercio al verificarlo
+    access_code_hash TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_merchants_code ON merchants (access_code_hash);
+
+-- Chat del barrio: mensajes reales entre comercios y vecinos.
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id    TEXT NOT NULL,
+    community_id  TEXT NOT NULL,
+    author        TEXT NOT NULL,
+    merchant_id   INTEGER REFERENCES merchants (id) ON DELETE SET NULL,
+    text          TEXT NOT NULL,
+    risky_links   TEXT NOT NULL DEFAULT '[]',
+    hidden        INTEGER NOT NULL DEFAULT 0,
+    reporter_hash TEXT,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_community ON chat_messages (community_id, created_at);
+
+-- Imágenes de la cámara del comercio guardadas como evidencia de una alerta.
+CREATE TABLE IF NOT EXISTS alert_evidence (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id    INTEGER NOT NULL REFERENCES alerts (id) ON DELETE CASCADE,
+    file        TEXT NOT NULL UNIQUE,
+    captured_at TEXT NOT NULL
+);
+
+-- Suscripciones Web Push: avisos aunque la página esté cerrada.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    endpoint     TEXT NOT NULL UNIQUE,
+    p256dh       TEXT NOT NULL,
+    auth         TEXT NOT NULL,
+    network_id   TEXT NOT NULL,
+    community_id TEXT,
+    merchant_id  INTEGER REFERENCES merchants (id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL
 );
 
 -- Modalidades de fraude del Centro de aprendizaje, con su reto.
@@ -141,10 +179,41 @@ def get_db() -> Iterator[sqlite3.Connection]:
         yield conn
 
 
+# Columnas añadidas después de la primera versión: se agregan a las bases ya creadas.
+MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("merchants", "access_code_hash", "TEXT"),
+    ("alerts", "merchant_id", "INTEGER REFERENCES merchants (id) ON DELETE SET NULL"),
+    # comercio afectado por la alerta (su cámara se muestra mientras dura)
+    ("alerts", "affected_merchant_id", "INTEGER REFERENCES merchants (id) ON DELETE SET NULL"),
+    # cámara del comercio: 'ninguna' | 'dispositivo' | 'ip'
+    ("merchants", "camera_mode", "TEXT NOT NULL DEFAULT 'ninguna'"),
+    ("merchants", "camera_enabled", "INTEGER NOT NULL DEFAULT 0"),
+    # dirección de la cámara IP: nunca se envía al navegador
+    ("merchants", "camera_url", "TEXT"),
+    # 'pendiente' | 'aprobada' | 'rechazada' (la cámara IP la aprueba un moderador)
+    ("merchants", "camera_url_status", "TEXT"),
+    ("merchants", "camera_consent_at", "TEXT"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, definition in MIGRATIONS:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db() -> None:
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
     with session() as conn:
-        conn.executescript(SCHEMA)
+        # Las tablas nuevas primero; luego las columnas nuevas de las tablas viejas
+        # (el índice de access_code_hash necesita la columna, por eso se reintenta).
+        try:
+            conn.executescript(SCHEMA)
+        except sqlite3.OperationalError:
+            _migrate(conn)
+            conn.executescript(SCHEMA)
+        _migrate(conn)
         count = conn.execute("SELECT COUNT(*) FROM modalities").fetchone()[0]
         if count == 0:
             for item in SEED_MODALITIES:

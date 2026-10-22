@@ -60,6 +60,11 @@ class Settings:
     rate_limit_per_minute: int = field(default_factory=lambda: int(os.getenv("RATE_LIMIT_PER_MINUTE", "30")))
     hash_salt: str = field(default_factory=lambda: os.getenv("HASH_SALT", "cambia-esta-sal"))
     whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "base"))
+    # Minutos que la cámara del comercio afectado queda visible tras una alerta
+    camera_window_minutes: int = field(default_factory=lambda: int(os.getenv("CAMERA_WINDOW_MINUTES", "30")))
+    # Contacto que exige el estándar Web Push (mailto: o https:)
+    vapid_subject: str = field(default_factory=lambda: os.getenv("VAPID_SUBJECT", "mailto:soporte@redsegura.local"))
+    max_frame_bytes: int = 1_500_000
 
     # Límites de entrada
     max_text_chars: int = 8000

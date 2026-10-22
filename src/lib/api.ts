@@ -6,6 +6,8 @@
  * función lanza `ApiUnavailable` y la interfaz pasa al motor local.
  */
 
+import { merchantHeaders } from './merchantCode'
+
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
 export class ApiUnavailable extends Error {}
@@ -25,13 +27,13 @@ async function request<T>(path: string, init?: RequestInit & { timeoutMs?: numbe
   try {
     response = await fetch(`${BASE}${path}`, { ...init, signal: controller.signal })
   } catch {
-    throw new ApiUnavailable('No hay conexión con el servidor de la red.')
+    throw new ApiUnavailable('No hay conexión con la red en este momento. Revise su internet e intente de nuevo.')
   } finally {
     window.clearTimeout(timer)
   }
   // El proxy de Vite responde 502/504 cuando el backend está apagado
   if (response.status === 502 || response.status === 503 || response.status === 504) {
-    throw new ApiUnavailable('El servidor de la red no está disponible.')
+    throw new ApiUnavailable('La red no está disponible en este momento. Intente de nuevo en unos minutos.')
   }
   if (!response.ok) {
     let message = `Error ${response.status}`
@@ -158,6 +160,14 @@ export type CommunityAlert = {
   threat: (Threats & { suspect_description?: string }) | null
   status: AlertStatus
   confirmations: number
+  /** La publicó un comercio con código de acceso válido. */
+  merchant_verified: boolean
+  /** Esta persona ya marcó «a mí también» (sólo en las respuestas a su navegador). */
+  confirmed_by_me?: boolean
+  /** Comercio afectado por la alerta (su cámara se ve mientras dura). */
+  affected_merchant?: { id: number; name: string; business: string } | null
+  camera?: AlertCamera
+
   created_at: string
   reviewed_at: string | null
   review_note: string | null
@@ -202,6 +212,76 @@ export type Merchant = {
   community_id: string | null
   status: 'pendiente' | 'verificado' | 'rechazado'
   created_at: string
+  has_code?: boolean
+  camera_mode?: CameraSettings['mode']
+  camera_enabled?: number
+  /** Sólo los moderadores ven la dirección de la cámara IP, para revisarla. */
+  camera_url?: string | null
+  camera_url_status?: CameraSettings['ip_status']
+  /** Sólo en la respuesta de aprobación: se muestra una vez. */
+  access_code?: string | null
+}
+
+export type AlertCamera = {
+  available: boolean
+  mode: 'dispositivo' | 'ip' | null
+  /** La cámara está enviando imagen ahora mismo. */
+  online: boolean
+  live_until: string
+  /** Imágenes guardadas como evidencia al crear la alerta. */
+  evidence: number
+}
+
+export type CameraSettings = {
+  mode: 'ninguna' | 'dispositivo' | 'ip'
+  enabled: boolean
+  ip_configured: boolean
+  ip_status: 'pendiente' | 'aprobada' | 'rechazada' | null
+  consent_at: string | null
+  device_online: boolean
+  window_minutes: number
+}
+
+export type VerifiedMerchant = {
+  id: number
+  name: string
+  business: string
+  network_id: string
+  community_id: string | null
+  has_camera: boolean
+}
+
+export type ChatMessage = {
+  id: number
+  network_id: string
+  community_id: string
+  author: string
+  verified: boolean
+  text: string
+  risky_links: { domain: string; risk: 'alto' | 'medio'; reason: string }[]
+  created_at: string
+  hidden?: boolean
+}
+
+export type CommunityStats = {
+  days: number
+  alerts: number
+  incidents: number
+  verified_alerts: number
+  confirmations: number
+  last_alert_at: string | null
+  top_category: { category: string; label: string; total: number } | null
+  analyses: number
+  frauds_detected: number
+  verified_merchants: number
+}
+
+export type MerchantProfile = {
+  id: number
+  name: string
+  business: string
+  network_id: string
+  community_id: string | null
 }
 
 /** Categorías de fraude (las mismas del backend). */
@@ -268,7 +348,6 @@ export const api = {
   createAlert: (input: {
     networkId: string
     communityId?: string
-    businessName?: string
     lat?: number
     lng?: number
     level: Level
@@ -278,11 +357,12 @@ export const api = {
     identifiers?: string
     image?: Blob | null
     clientThreats?: Threats | null
+    /** Comercio afectado (por defecto, el comercio que reporta). */
+    affectedMerchantId?: number
   }) => {
     const form = new FormData()
     form.append('network_id', input.networkId)
     if (input.communityId) form.append('community_id', input.communityId)
-    if (input.businessName) form.append('business_name', input.businessName)
     if (input.lat != null && input.lng != null) {
       form.append('lat', String(input.lat))
       form.append('lng', String(input.lng))
@@ -294,10 +374,83 @@ export const api = {
     if (input.identifiers) form.append('identifiers', input.identifiers)
     if (input.image) form.append('image', input.image, 'alerta.jpg')
     if (input.clientThreats) form.append('client_threats', JSON.stringify(input.clientThreats))
-    return request<CommunityAlert>('/api/alerts', { method: 'POST', body: form })
+    if (input.affectedMerchantId) form.append('affected_merchant_id', String(input.affectedMerchantId))
+    // el nombre del comercio lo pone el servidor a partir del código de acceso
+    return request<CommunityAlert>('/api/alerts', { method: 'POST', body: form, headers: merchantHeaders() })
   },
 
   confirmAlert: (id: number) => request<CommunityAlert>(`/api/alerts/${id}/confirm`, { method: 'POST' }),
+
+  communityStats: (networkId: string, communityId?: string) => {
+    const query = new URLSearchParams({ network_id: networkId })
+    if (communityId) query.set('community_id', communityId)
+    return request<CommunityStats>(`/api/stats/community?${query}`, { timeoutMs: 8000 })
+  },
+
+  chat: (communityId: string) =>
+    request<ChatMessage[]>(`/api/chat?community_id=${encodeURIComponent(communityId)}`, { timeoutMs: 8000 }),
+
+  sendChat: (input: { networkId: string; communityId: string; author: string; text: string }) =>
+    request<ChatMessage>('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...merchantHeaders() },
+      body: JSON.stringify({
+        network_id: input.networkId,
+        community_id: input.communityId,
+        author: input.author,
+        text: input.text,
+      }),
+    }),
+
+  merchantSession: (code: string) =>
+    request<MerchantProfile>('/api/merchants/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    }),
+
+  verifiedMerchants: (networkId: string) =>
+    request<VerifiedMerchant[]>(`/api/merchants?network_id=${encodeURIComponent(networkId)}`, { timeoutMs: 8000 }),
+
+  myMerchant: () =>
+    request<MerchantProfile & { camera: CameraSettings }>('/api/merchants/me', { headers: merchantHeaders() }),
+
+  configureCamera: (body: { mode: CameraSettings['mode']; enabled: boolean; consent?: boolean; url?: string }) =>
+    request<CameraSettings>('/api/merchants/me/camera', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...merchantHeaders() },
+      body: JSON.stringify(body),
+    }),
+
+  uploadFrame: (frame: Blob) => {
+    const form = new FormData()
+    form.append('image', frame, 'cuadro.jpg')
+    return fetch(`${BASE}/api/merchants/me/camera/frame`, { method: 'POST', body: form, headers: merchantHeaders() })
+  },
+
+  alertCamera: (alertId: number) =>
+    request<{ affected_merchant: CommunityAlert['affected_merchant']; camera: AlertCamera }>(`/api/alerts/${alertId}/camera`, {
+      timeoutMs: 8000,
+    }),
+
+  alertEvidence: (alertId: number) =>
+    request<{ url: string; captured_at: string }[]>(`/api/alerts/${alertId}/evidence`, { timeoutMs: 8000 }),
+
+  pushKey: () => request<{ key: string }>('/api/push/key', { timeoutMs: 8000 }),
+
+  pushSubscribe: (body: { endpoint: string; keys: { p256dh: string; auth: string }; network_id: string; community_id?: string }) =>
+    request<{ ok: boolean }>('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...merchantHeaders() },
+      body: JSON.stringify(body),
+    }),
+
+  pushUnsubscribe: (endpoint: string) =>
+    request<{ ok: boolean }>('/api/push/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint }),
+    }),
 
   modalities: () => request<Modality[]>('/api/education/modalities', { timeoutMs: 8000 }),
 
@@ -330,8 +483,21 @@ export function moderationApi(token: string) {
     reviewAlert: (id: number, body: { status: 'verificada' | 'rechazada' | 'sin_verificar'; note?: string; level?: Level }) =>
       request<CommunityAlert>(`/api/moderation/alerts/${id}`, { method: 'PATCH', headers: json, body: JSON.stringify(body) }),
     merchants: () => request<Merchant[]>('/api/moderation/merchants', { headers }),
-    reviewMerchant: (id: number, status: Merchant['status']) =>
-      request<Merchant>(`/api/moderation/merchants/${id}`, { method: 'PATCH', headers: json, body: JSON.stringify({ status }) }),
+    reviewMerchant: (id: number, status: Merchant['status'], newCode = false) =>
+      request<Merchant>(`/api/moderation/merchants/${id}`, {
+        method: 'PATCH',
+        headers: json,
+        body: JSON.stringify({ status, new_code: newCode }),
+      }),
+    chat: () => request<ChatMessage[]>('/api/moderation/chat', { headers }),
+    reviewCamera: (merchantId: number, approved: boolean) =>
+      request<Merchant>(`/api/moderation/merchants/${merchantId}/camera`, {
+        method: 'PATCH',
+        headers: json,
+        body: JSON.stringify({ approved }),
+      }),
+    reviewChat: (id: number, hidden: boolean) =>
+      request<ChatMessage>(`/api/moderation/chat/${id}`, { method: 'PATCH', headers: json, body: JSON.stringify({ hidden }) }),
     generateModalities: () =>
       request<{ created: Modality[]; skipped: string[] }>('/api/moderation/modalities/generate', {
         method: 'POST',
@@ -340,5 +506,8 @@ export function moderationApi(token: string) {
   }
 }
 
-/** URL del flujo de alertas en vivo (SSE). */
+/** Imagen en vivo de la cámara del comercio afectado (el parámetro evita la caché). */
+export const alertFrameUrl = (alertId: number, tick: number) => `${BASE}/api/alerts/${alertId}/camera/frame?t=${tick}`
+
+/** URL del flujo en vivo de la red: alertas y chat (SSE). */
 export const ALERTS_STREAM_URL = `${BASE}/api/alerts/stream`

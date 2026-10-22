@@ -1,6 +1,8 @@
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy, useCallback, useState } from 'react'
 import type { Community, CommunityNetwork } from '../../data/networks'
+import { useAlerts } from '../../lib/alertsStore'
 import { useCommunityHouses } from '../../lib/useCommunityHouses'
+import { AlertDetailModal } from './alerts/AlertDetailModal'
 import { NetworkHero } from './NetworkHero'
 
 /**
@@ -35,6 +37,11 @@ export function CommunityStage({
   onOpenChat: () => void
 }) {
   const [view, setView] = useState<'mapa' | 'isometrica'>('mapa')
+  // alerta abierta desde el mapa o la vista isométrica (se lee del almacén en vivo)
+  const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null)
+  const { alerts } = useAlerts({ networkId: network.id })
+  const selectedAlert = alerts.find((alert) => alert.id === selectedAlertId) ?? null
+  const selectAlert = useCallback((id: number) => setSelectedAlertId(id), [])
 
   // Una sola consulta de casas por barrio: la usan el mapa y la escena 3D.
   const { houses, anchors, loading, source } = useCommunityHouses(
@@ -61,6 +68,7 @@ export function CommunityStage({
               loading={loading}
               source={source}
               className="absolute inset-0"
+              onSelectAlert={selectAlert}
             />
           </Suspense>
         ) : (
@@ -74,6 +82,7 @@ export function CommunityStage({
           community={community}
           anchors={anchors}
           onOpenChat={onOpenChat}
+          onSelectAlert={selectAlert}
           chatOpen={chatOpen}
         />
       )}
@@ -148,7 +157,7 @@ export function CommunityStage({
           <button
             type="button"
             onClick={onOpenChat}
-            className="pointer-events-auto absolute right-6 bottom-24 z-30 flex items-center gap-2.5 rounded-full border border-white/70 bg-white/85 px-4 py-3 text-[12px] font-bold text-[#1d2f57] shadow-[0_26px_54px_-22px_rgba(30,55,130,.7)] backdrop-blur-xl transition-transform duration-200 hover:-translate-y-0.5"
+            className="pointer-events-auto absolute right-4 bottom-[228px] z-30 sm:right-6 flex items-center gap-2.5 rounded-full border border-white/70 bg-white/85 px-4 py-3 text-[12px] font-bold text-[#1d2f57] shadow-[0_26px_54px_-22px_rgba(30,55,130,.7)] backdrop-blur-xl transition-transform duration-200 hover:-translate-y-0.5"
           >
             <span
               className="grid h-8 w-8 place-items-center rounded-full text-white"
@@ -167,6 +176,7 @@ export function CommunityStage({
           </button>
         </>
       )}
+      {selectedAlert && <AlertDetailModal alert={selectedAlert} onClose={() => setSelectedAlertId(null)} />}
     </div>
   )
 }

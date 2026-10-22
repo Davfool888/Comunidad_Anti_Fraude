@@ -148,3 +148,27 @@ cd server && .venv/Scripts/python -m pip install faster-whisper
 ```
 
 El modelo (`WHISPER_MODEL`, por defecto `base`) se descarga la primera vez.
+
+## 7. Cámara del comercio afectado y avisos
+
+Cuando se publica una alerta, el **comercio afectado** (el comercio verificado que
+la reporta, o el que elige quien la reporta) muestra su cámara a la comunidad del
+barrio durante `CAMERA_WINDOW_MINUTES` (30 por defecto) y se notifica a todos.
+
+| Pieza | Cómo funciona |
+|---|---|
+| **Modo cámara** (celular o tablet del local) | Pantalla «Modo cámara» con `getUserMedia`: sube una imagen cada 4 s y una por segundo mientras hay una alerta del comercio. Los **rostros se pixelan en el propio dispositivo** (MediaPipe) antes de salir. Si llega una alerta del comercio: alarma sonora, pantalla roja y botón «Llamar al 123». |
+| **Cámara IP** | El comercio registra la URL de una instantánea JPEG o un flujo MJPEG; **un moderador la aprueba**. El servidor consulta la cámara y reenvía la imagen: la URL nunca llega al navegador. Se bloquean loopback, link-local y URLs con credenciales (SSRF). RTSP necesita un convertidor (p. ej. go2rtc o MediaMTX). |
+| **Evidencia** | Al crear la alerta se guardan las imágenes recientes de la cámara (`alert_evidence`), servidas sólo mientras la alerta no sea rechazada. |
+| **Aviso en la app** | Aviso flotante con sonido (Web Audio) en cualquier ventana; alarma prioritaria si la alerta es del comercio de este navegador. |
+| **Web Push** | `public/sw.js` + claves VAPID (`server/data/vapid_private.pem`, se generan solas). Llega aunque la página esté cerrada; al pulsarla abre la alerta con la cámara. |
+
+Requisitos: la cámara del navegador y Web Push sólo funcionan en un **contexto
+seguro** (`https://` o `localhost`). Para usar un celular de la red local hay que
+servir la web con HTTPS.
+
+Riesgos aceptados por decisión del equipo: la cámara es visible para **toda la
+comunidad** durante la alerta y se activa con **cualquier alerta**. Mitigaciones:
+ventana de tiempo, consentimiento del comercio (aviso de videovigilancia, Ley 1581),
+rostros pixelados en modo dispositivo, URL de la cámara IP oculta y aprobada por un
+moderador, y alertas rechazadas que dejan de mostrar cámara y evidencia.

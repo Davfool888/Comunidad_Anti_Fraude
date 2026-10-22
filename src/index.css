@@ -322,9 +322,16 @@
  * capa y, en CSS, lo que no tiene capa gana a lo que sí la tiene.
  */
 
-/* El control de zoom baja para no chocar con el conmutador de estilos */
+/* El zoom baja bajo la cabecera, el conmutador de vista y el de estilos */
 .ns-map .leaflet-top.leaflet-right {
-  top: 56px;
+  top: 214px;
+}
+
+@media (min-width: 640px) {
+  .ns-map .leaflet-top.leaflet-right {
+    top: 168px;
+    right: 14px;
+  }
 }
 
 /* La escala se separa del borde inferior */

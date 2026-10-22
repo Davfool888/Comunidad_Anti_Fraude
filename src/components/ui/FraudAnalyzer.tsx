@@ -22,9 +22,23 @@ function alertDraft(analysis: AnalysisResult, original: string): AlertDraft {
     .filter((entity) => entity.kind === 'enlace')
     .map((entity) => entity.masked)
     .join(' ')
+  // señales concretas, no el texto genérico del veredicto
+  const signals = analysis.signals
+    .slice(0, 4)
+    .map((signal) => `• ${signal.label}`)
+    .join('\n')
+  const received = (analysis.transcript || original || analysis.extracted_text || '').trim().slice(0, 700)
+  const risky = analysis.links.filter((link) => link.risk !== 'bajo').map((link) => link.domain)
   return {
-    title: `${analysis.category_label}: ${analysis.verdict === 'fraude' ? 'intento de fraude' : 'mensaje sospechoso'}`,
-    description: `${analysis.summary}\n\nMensaje recibido: ${(original || analysis.extracted_text || '').slice(0, 900)}`,
+    title: analysis.headline.slice(0, 140) || `${analysis.category_label}: intento de fraude`,
+    description: [
+      `Modalidad: ${analysis.category_label}.`,
+      signals && `Señales detectadas:\n${signals}`,
+      risky.length ? `No abran: ${risky.join(', ')}` : '',
+      received && `Mensaje recibido:\n«${received}»`,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
     category: analysis.category,
     level: analysis.emergency || analysis.verdict === 'fraude' ? 'danger' : 'warning',
     identifiers,

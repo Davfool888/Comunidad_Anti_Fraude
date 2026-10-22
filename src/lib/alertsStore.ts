@@ -1,11 +1,13 @@
 import { useEffect, useSyncExternalStore } from 'react'
-import { ALERTS_STREAM_URL, api, type CommunityAlert } from './api'
+import { api, type CommunityAlert } from './api'
+import { onLiveEvent, onLiveStatus, onReconnect, retainLive } from './live'
 
 /**
  * Alertas de la red en vivo.
  *
- * Una sola conexión SSE para toda la aplicación: el mapa, la vista
- * isométrica, el chat y el panel de alertas leen del mismo almacén.
+ * Un solo almacén para toda la aplicación: el mapa, la vista isométrica, el
+ * chat y el panel de alertas leen de aquí. Los eventos llegan por la conexión
+ * compartida de `live.ts`.
  */
 
 type State = {
@@ -16,8 +18,7 @@ type State = {
 
 let state: State = { alerts: [], online: false, loaded: false }
 const listeners = new Set<() => void>()
-let source: EventSource | null = null
-let users = 0
+let wired = false
 
 function set(next: Partial<State>) {
   state = { ...state, ...next }
@@ -25,8 +26,17 @@ function set(next: Partial<State>) {
 }
 
 function upsert(alert: CommunityAlert) {
+  const previous = state.alerts.find((item) => item.id === alert.id)
+  // los eventos del servidor son para todos: «confirmé yo» se conserva del dato local
+  const merged = {
+    ...previous,
+    ...alert,
+    camera: alert.camera ?? previous?.camera,
+    affected_merchant: alert.affected_merchant ?? previous?.affected_merchant,
+    confirmed_by_me: alert.confirmed_by_me ?? previous?.confirmed_by_me ?? false,
+  }
   const others = state.alerts.filter((item) => item.id !== alert.id)
-  set({ alerts: [alert, ...others].sort((a, b) => b.created_at.localeCompare(a.created_at)) })
+  set({ alerts: [merged, ...others].sort((a, b) => b.created_at.localeCompare(a.created_at)) })
 }
 
 function remove(id: number) {
@@ -41,36 +51,38 @@ async function refresh() {
   }
 }
 
-function connect() {
-  if (source || typeof EventSource === 'undefined') return
-  void refresh()
-  source = new EventSource(ALERTS_STREAM_URL)
-  source.onopen = () => set({ online: true })
-  source.onerror = () => set({ online: false })
-  const parse = (event: MessageEvent) => JSON.parse(event.data as string) as CommunityAlert
-  source.addEventListener('alert', (event) => upsert(parse(event as MessageEvent)))
-  source.addEventListener('alert_update', (event) => upsert(parse(event as MessageEvent)))
-  source.addEventListener('alert_removed', (event) => remove(parse(event as MessageEvent).id))
+function wire() {
+  if (wired) return
+  wired = true
+  onLiveEvent<CommunityAlert>('alert', upsert)
+  onLiveEvent<CommunityAlert>('alert_update', upsert)
+  onLiveEvent<CommunityAlert>('alert_removed', (alert) => remove(alert.id))
+  onReconnect(() => void refresh())
+  onLiveStatus((online) => set({ online }))
 }
 
-function disconnect() {
-  source?.close()
-  source = null
-}
-
-/** Añade una alerta recién creada sin esperar al evento del servidor. */
+/** Añade o actualiza una alerta sin esperar al evento del servidor. */
 export function addLocalAlert(alert: CommunityAlert) {
   upsert(alert)
 }
 
+/** «A mí también me pasó», con actualización optimista. */
+export async function confirmAlert(alert: CommunityAlert) {
+  if (alert.confirmed_by_me) return
+  upsert({ ...alert, confirmed_by_me: true, confirmations: alert.confirmations + 1 })
+  try {
+    upsert(await api.confirmAlert(alert.id))
+  } catch {
+    upsert(alert) // se deshace si falló
+  }
+}
+
 export function useAlerts(filter?: { networkId?: string; communityId?: string }) {
   useEffect(() => {
-    users += 1
-    connect()
-    return () => {
-      users -= 1
-      if (users === 0) disconnect()
-    }
+    wire()
+    const release = retainLive()
+    if (!state.loaded) void refresh()
+    return release
   }, [])
 
   const snapshot = useSyncExternalStore(

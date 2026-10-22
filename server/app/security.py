@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import secrets
+import sqlite3
 import time
 from collections import defaultdict, deque
 
@@ -81,6 +83,37 @@ def pseudonym(value: str) -> str:
 
 def reporter_hash(request: Request) -> str:
     return pseudonym(f"ip:{client_ip(request)}")
+
+
+# ---------------------------------------------------------------------------
+# Comercios verificados (código de acceso)
+# ---------------------------------------------------------------------------
+
+# Sin letras ni números que se confundan al dictarlo (0/O, 1/I/L)
+_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+
+
+def generate_access_code() -> str:
+    """Código que el moderador entrega al comercio: RS-XXXX-XXXX (≈ 40 bits)."""
+    chars = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
+    return f"RS-{chars[:4]}-{chars[4:]}"
+
+
+def normalize_code(code: str) -> str:
+    return re.sub(r"[^0-9A-Z]", "", code.upper())
+
+
+def code_hash(code: str) -> str:
+    return pseudonym(f"merchant:{normalize_code(code)}")
+
+
+def merchant_from_code(conn: sqlite3.Connection, code: str | None) -> sqlite3.Row | None:
+    """Comercio verificado al que pertenece el código, o None."""
+    if not code or len(code) > 40:
+        return None
+    return conn.execute(
+        "SELECT * FROM merchants WHERE access_code_hash = ? AND status = 'verificado'", (code_hash(code),)
+    ).fetchone()
 
 
 # ---------------------------------------------------------------------------

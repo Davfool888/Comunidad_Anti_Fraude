@@ -69,6 +69,15 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => entities[character] ?? character)
 }
 
+/** Créditos del mapa en texto plano: la atribución viene en HTML para Leaflet. */
+function attributionText(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&copy;/g, '©')
+    .replace(/&amp;/g, '&')
+    .trim()
+}
+
 /** Estilo de edificio que corresponde a cada tipo de comercio. */
 function shopStyle(business: string): ShopStyle {
   return STYLE_BY_BUSINESS[business] ?? 'grocery'
@@ -81,6 +90,7 @@ export function NeighborhoodMap({
   loading,
   source,
   className = '',
+  onSelectAlert,
 }: {
   network: CommunityNetwork
   community: Community
@@ -91,6 +101,8 @@ export function NeighborhoodMap({
   /** De dónde vienen los anclajes. */
   source: 'openstreetmap' | 'aproximado'
   className?: string
+  /** Abre el detalle de una alerta al pulsar su marcador. */
+  onSelectAlert?: (alertId: number) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLDivElement>(null)
@@ -446,7 +458,12 @@ export function NeighborhoodMap({
         iconSize: [26, 26],
         iconAnchor: [13, 13],
       })
-      const marker = L.marker(position, { icon, zIndexOffset: 2000, title: alert.title }).addTo(map)
+      const marker = L.marker(position, { icon, zIndexOffset: 2000, title: alert.title, keyboard: true }).addTo(map)
+      marker.on('click', () => onSelectAlert?.(alert.id))
+      marker.on('keypress', (event) => {
+        const key = (event.originalEvent as KeyboardEvent).key
+        if (key === 'Enter' || key === ' ') onSelectAlert?.(alert.id)
+      })
       const tooltip = document.createElement('span')
       const name = document.createElement('span')
       name.className = 'ns-alert-tooltip__name'
@@ -458,12 +475,13 @@ export function NeighborhoodMap({
       marker.bindTooltip(tooltip, { direction: 'top', offset: [0, -14], className: 'ns-alert-tooltip' })
       alertMarkersRef.current.push(marker)
     })
-  }, [alerts, shops, community])
+  }, [alerts, shops, community, onSelectAlert])
 
   return (
     <div
       ref={frameRef}
-      className={`relative h-full w-full ${className}`}
+      // isolate: las capas de Leaflet (z-index 400+) no tapan la cabecera ni los botones flotantes
+      className={`relative isolate h-full w-full ${className}`}
       onKeyDown={(event) => {
         if (event.key === 'Escape') closeCard()
       }}
@@ -471,7 +489,7 @@ export function NeighborhoodMap({
       <div ref={containerRef} className="ns-map h-full w-full bg-[#dfe9fb]" />
 
       {/* etiqueta de la simulación y estado de los datos */}
-      <div className="pointer-events-none absolute top-3 left-3 z-[500] flex max-w-[280px] flex-col items-start gap-2">
+      <div className="pointer-events-none absolute top-[104px] left-4 z-[500] flex max-w-[280px] flex-col items-start gap-2 sm:left-5">
         <SimulatedTag />
         <span
           role="status"
@@ -497,7 +515,7 @@ export function NeighborhoodMap({
       </div>
 
       {/* estilos de mapa: claro, calles o satélite */}
-      <div className="absolute top-3 right-3 z-[500] flex items-center gap-1 rounded-full bg-white/85 p-1 shadow-[0_12px_28px_-16px_rgba(30,55,130,.8)] backdrop-blur-xl">
+      <div className="absolute top-[172px] right-4 z-[500] flex items-center gap-1 rounded-full sm:top-[124px] sm:right-6 lg:right-7 bg-white/85 p-1 shadow-[0_12px_28px_-16px_rgba(30,55,130,.8)] backdrop-blur-xl">
         {MAP_STYLES.map((item) => (
           <button
             key={item.id}
@@ -644,7 +662,7 @@ export function NeighborhoodMap({
             {alerts.length} alerta{alerts.length === 1 ? '' : 's'} activa{alerts.length === 1 ? '' : 's'} en el barrio
           </p>
         )}
-        <p className="mt-2 text-[8.5px] font-medium text-[#9db0cd]">{style.attribution}</p>
+        <p className="mt-2 text-[8.5px] font-medium text-[#9db0cd]">{attributionText(style.attribution)}</p>
       </div>
     </div>
   )
