@@ -9,7 +9,7 @@ import type { ReactNode } from 'react'
  * sobre la página clara, en azul tinta con un velo translúcido.
  */
 
-export type AppView = 'fraude' | 'comunidades' | 'educacion'
+export type AppView = 'fraude' | 'comunidades' | 'educacion' | 'moderacion'
 
 /** Tono según el fondo sobre el que se apoya. */
 export type HeaderTone = 'cielo' | 'claro'
@@ -66,6 +66,7 @@ export function NetworkHeader({
     { id: 'fraude', label: 'Analizar fraude' },
     { id: 'comunidades', label: 'Comunidades' },
     { id: 'educacion', label: 'Centro de aprendizaje' },
+    { id: 'moderacion', label: 'Panel de la red' },
   ]
 
   return (

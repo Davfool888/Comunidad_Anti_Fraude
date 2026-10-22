@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { findNetwork } from './data/networks'
+import { AlertsPanel } from './components/ui/alerts/AlertsPanel'
 import { CommunityChatDrawer } from './components/ui/CommunityChatDrawer'
 import { CommunityStage } from './components/ui/CommunityStage'
 import { EducationProvider } from './components/ui/education/EducationProvider'
@@ -7,6 +8,7 @@ import { EscudoInteligencia } from './components/ui/EscudoInteligencia'
 import { FraudAnalyzer } from './components/ui/FraudAnalyzer'
 import { LearningCenter } from './components/ui/learning/LearningCenter'
 import { LearningProvider } from './components/ui/learning/LearningProvider'
+import { ModerationPanel } from './components/ui/moderation/ModerationPanel'
 import { NetworkHeader, type AppView } from './components/ui/NetworkHeader'
 import { NetworkSwitcher } from './components/ui/NetworkSwitcher'
 import { CommunityStatsSection, EducationSection, StaffSection } from './components/ui/SidebarSections'
@@ -18,10 +20,12 @@ import { CommunityStatsSection, EducationSection, StaffSection } from './compone
  *  · **Comunidades**: la maqueta 3D de la red de comercios. Aquí se abre el
  *    chat de la comunidad, como un panel pegado al borde izquierdo por encima
  *    del modelo, y se puede minimizar.
- *  · **Centro de aprendizaje**: los juegos de prevención de fraude y las
- *    lecciones del modulo educativo.
+ *  · **Centro de aprendizaje**: los juegos de prevención de fraude, las
+ *    lecciones del modulo educativo y las modalidades vigentes.
+ *  · **Panel de la red**: moderación de alertas y comercios, tendencias y
+ *    generación de retos (requiere el token de moderación).
  *
- * Las tres comparten la red y la comunidad de barrio activas.
+ * Todas comparten la red y la comunidad de barrio activas.
  */
 export default function App() {
   const [view, setView] = useState<AppView>('fraude')
@@ -59,13 +63,13 @@ export default function App() {
             view={view}
             onView={setView}
             onOpenChat={openChat}
-            tone={view === 'fraude' || view === 'educacion' ? 'claro' : 'cielo'}
+            tone={view === 'comunidades' ? 'cielo' : 'claro'}
             switcher={
               <NetworkSwitcher
                 activeNetwork={network}
                 activeCommunity={community ?? undefined}
                 onEnter={enterNetwork}
-                tone={view === 'fraude' || view === 'educacion' ? 'claro' : 'cielo'}
+                tone={view === 'comunidades' ? 'cielo' : 'claro'}
               />
             }
           />
@@ -73,12 +77,17 @@ export default function App() {
           {view === 'fraude' ? (
             /* -------- Ventana principal: Analizar fraude -------- */
             <div className="mx-auto w-full max-w-[1400px] px-4 pt-28 pb-16 sm:px-6 sm:pt-32">
-              <FraudAnalyzer community={community} />
+              <FraudAnalyzer network={network} community={community} />
             </div>
           ) : view === 'educacion' ? (
             /* -------- Ventana del Centro de aprendizaje -------- */
             <div className="mx-auto w-full max-w-[1400px] px-4 pt-28 pb-16 sm:px-6 sm:pt-32">
               <LearningCenter />
+            </div>
+          ) : view === 'moderacion' ? (
+            /* -------- Panel de la red (moderadores) -------- */
+            <div className="mx-auto w-full max-w-[1400px] px-4 pt-28 pb-16 sm:px-6 sm:pt-32">
+              <ModerationPanel />
             </div>
           ) : (
             /* -------- Ventana de comunidades: la maqueta 3D -------- */
@@ -91,6 +100,9 @@ export default function App() {
               />
 
               <div className="relative mx-auto w-full max-w-[1400px] px-4 py-16 sm:px-6 sm:py-20">
+                <div className="mb-14">
+                  <AlertsPanel network={network} community={community} />
+                </div>
                 <div className="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1fr)_400px] xl:gap-8">
                   {/* columna principal */}
                   <div>

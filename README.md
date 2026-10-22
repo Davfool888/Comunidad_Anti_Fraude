@@ -7,21 +7,54 @@ juegos interactivos.
 
 Construido con **React 19 + TypeScript + Vite + Tailwind CSS v4**,
 **Three.js (react-three-fiber)** para la escena isométrica y **Leaflet** para
-los mapas.
+los mapas. El backend (`server/`) es **FastAPI + SQLite** y la IA es
+**Gemini** (gratis, con límites) o **Claude** (de pago), con respaldo local en el navegador
+(**Tesseract.js** para leer capturas y **MediaPipe** para detectar armas y
+rostros).
+
+## Puesta en marcha
+
+Requisitos: Node 20.19+ y Python 3.12.
+
+```bash
+# 1. Frontend (descarga también los modelos de visión a public/)
+npm install
+
+# 2. Backend
+cd server
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt   # Windows
+# .venv/bin/python -m pip install -r requirements.txt     # macOS / Linux
+cp .env.example .env        # y completa GEMINI_API_KEY (o ANTHROPIC_API_KEY) y MODERATOR_TOKEN
+cd ..
+
+# 3. Arrancar (dos terminales)
+npm run dev:api             # API en http://127.0.0.1:8000  (docs en /docs)
+npm run dev                 # web en http://localhost:5173 (redirige /api al backend)
+
+# Pruebas
+npm test                    # tipos + lint + build del frontend
+npm run test:api            # pruebas del backend
+```
+
+**Sin ninguna clave de IA todo sigue funcionando** con el motor local: reglas,
+análisis de enlaces, base comunitaria, OCR y detección de objetos en el
+navegador. **Sin backend**, el análisis se hace por completo en el navegador
+(las alertas y el panel de la red necesitan el backend).
 
 ## Qué hay aquí
 
-La aplicación tiene **tres ventanas** que se conmutan desde la cabecera:
+La aplicación tiene **cuatro ventanas** que se conmutan desde la cabecera:
 
 | Ventana | Contenido |
 |---|---|
-| **Analizar fraude** | Asistente de la red: habla o escribe una situación y recibe el veredicto (rojo, ámbar o azul) con el comercio, el día y la hora. |
-| **Comunidades** | El **mapa 2** del barrio con los comercios colocados encima de las casas reales de OpenStreetMap, y la **vista isométrica** en 3D de la red. |
-| **Centro de aprendizaje** | Ocho juegos de prevención recorriendo diapositivas: qué es, cómo funciona, la situación, la interacción, la retroalimentación y el cierre. |
+| **Analizar fraude** | Asistente con IA: responde preguntas («¿qué puedes hacer?», «¿qué es el SIM swap?») y recuerda la conversación; se le habla, se le escribe o se le pasan capturas, notas de voz y comprobantes. Devuelve el veredicto, la modalidad, las señales, el análisis de cada enlace, la revisión del comprobante, las amenazas en la imagen y qué hacer. Desde la respuesta se alerta a la red o se genera la denuncia. |
+| **Comunidades** | Alertas **en vivo** de la red (SSE) sobre el **mapa del barrio** y la **vista isométrica**, el panel de alertas con «a mí también me pasó», la consulta de números/enlaces reportados y el chat del barrio. |
+| **Centro de aprendizaje** | Los ocho juegos de prevención y las **modalidades vigentes**: retos que se actualizan con lo que reporta la comunidad. |
+| **Panel de la red** | Moderación (verificar o rechazar alertas y comercios), tendencias por modalidad y localidad, y generación de retos nuevos desde los reportes. Pide el token de moderación. |
 
-No hay backend, ni autenticación, ni datos personales: todo el estado vive en
-el navegador y las interfaces de persistencia están pensadas para que más
-adelante se sustituyan por un servidor.
+La arquitectura de la IA, las medidas de seguridad y la API están en
+[`docs/arquitectura-ia.md`](docs/arquitectura-ia.md).
 
 ## Estructura
 

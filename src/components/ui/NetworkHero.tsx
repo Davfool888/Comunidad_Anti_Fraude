@@ -1,6 +1,8 @@
 ﻿import { Suspense, lazy } from 'react'
 import type { Community, CommunityNetwork } from '../../data/networks'
+import { timeAgo, useAlerts } from '../../lib/alertsStore'
 import { NetworkCanvas } from '../three/network/NetworkCanvas'
+import { LEVEL_STYLE } from './alerts/levelStyle'
 import { NetworkStatsPanel } from './NetworkStatsPanel'
 
 /**
@@ -98,6 +100,8 @@ export function NetworkHero({
           </div>
         </div>
 
+        <NetworkBroadcast networkId={network.id} communityId={activeCommunity?.id} hub={network.neighborhood} />
+
         {/* panel de estadísticas: flotante en escritorio */}
         <div className="pointer-events-none absolute top-[76px] right-7 z-20 hidden lg:block">
           <NetworkStatsPanel network={network} community={activeCommunity ?? undefined} />
@@ -141,6 +145,34 @@ export function NetworkHero({
         <NetworkStatsPanel network={network} community={activeCommunity ?? undefined} />
       </div>
     </section>
+  )
+}
+
+/**
+ * Difusión en la vista isométrica: cada alerta que entra al núcleo se
+ * retransmite a todos los comercios conectados a su alrededor.
+ */
+function NetworkBroadcast({ networkId, communityId, hub }: { networkId: string; communityId?: string; hub: string }) {
+  const { alerts, online } = useAlerts({ networkId, communityId })
+  const latest = alerts.slice(0, 3)
+  if (!online && latest.length === 0) return null
+
+  return (
+    <div className="pointer-events-auto absolute top-16 left-1/2 z-30 w-[min(440px,calc(100%-32px))] -translate-x-1/2 rounded-2xl border border-white/70 bg-white/85 p-3 shadow-[0_20px_44px_-22px_rgba(30,55,130,.7)] backdrop-blur-xl">
+      <p className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-[0.12em] text-[#7a90b8] uppercase">
+        <span className={`h-1.5 w-1.5 rounded-full ${online ? 'animate-pulse bg-[#2fb87c]' : 'bg-[#a3b5d4]'}`} />
+        Núcleo de {hub} · {latest.length ? 'retransmitiendo a todos los comercios' : 'sin alertas activas'}
+      </p>
+      <ul className="mt-1.5 space-y-1">
+        {latest.map((alert) => (
+          <li key={alert.id} className="flex items-center gap-2 text-[11.5px] font-semibold text-[#1d2f57]">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: LEVEL_STYLE[alert.level].dot }} />
+            <span className="min-w-0 flex-1 truncate">{alert.title}</span>
+            <span className="shrink-0 text-[10px] font-semibold text-[#8aa0c4]">{timeAgo(alert.created_at)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
