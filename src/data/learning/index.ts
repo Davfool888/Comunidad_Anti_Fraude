@@ -1,8 +1,8 @@
 import type { GameDefinition } from './types'
-import { GAME_INTROS } from './games/introductions'
+import { GAME_INTROS } from './games/introductions.ts'
 
 /**
- * Registro de los **ocho juegos** del Centro de aprendizaje.
+ * Registro de los **nueve juegos** del Centro de aprendizaje.
  *
  * Cada entrada describe el juego y sus contenidos. Los componentes de la
  * interfaz son genéricos: añadir un caso o una pregunta es añadir datos.
@@ -120,6 +120,20 @@ export const GAMES: GameDefinition[] = [
     minutes: 10,
     total: 10,
     color: '#7d55e0',
+  },
+  {
+    id: 'anatomia-tarjeta',
+    intro: GAME_INTROS['anatomia-tarjeta'],
+    title: 'Anatomía de una tarjeta',
+    summary: 'Toca los campos de una tarjeta ficticia y aprende qué datos proteger.',
+    description:
+      'Explora el anverso y el reverso de una tarjeta de demostración, selecciona sus campos y descubre por qué el número, la fecha y el CVV se protegen en conjunto.',
+    icon: 'card',
+    difficulty: 'Básica',
+    minutes: 8,
+    total: 6,
+    color: '#3d8ee0',
+    simulated: true,
   },
 ]
 

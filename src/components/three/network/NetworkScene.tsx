@@ -1,8 +1,9 @@
-﻿import { memo, useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { OrthographicCamera } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { Community, CommunityNetwork } from '../../../data/networks'
+import type { HousePoint } from '../../../data/houses'
 import { Clouds } from './Clouds'
 import { SecurityCore } from './Core'
 import { Ground } from './Ground'
@@ -101,18 +102,31 @@ function NeonLights() {
 export const NetworkScene = memo(function NetworkScene({
   network,
   community,
+  anchors,
 }: {
   network?: CommunityNetwork
   community?: Community
+  /** Casas reales donde están los comercios (OpenStreetMap). */
+  anchors?: HousePoint[]
 }) {
   // Los rótulos de las tiendas y el título del núcleo los aporta la red
   // comunitaria activa: al cambiar de barrio la escena se reetiqueta sola.
   // Además, cada comunidad **acomoda sus edificios de forma distinta**:
   // otro orden, otras posiciones, otros tipos de comercio y otros colores.
+  // Cuando hay casas reales, cada edificio se planta sobre la vivienda
+  // donde está el comercio, en su posición geográfica.
   const shops = useMemo(() => {
     if (!community) return SHOPS
-    return arrangeShops(community)
-  }, [community])
+    return arrangeShops(community, anchors)
+  }, [community, anchors])
+
+  // Sonda de desarrollo: permite comprobar desde la consola dónde se ha
+  // plantado cada edificio y si usa su posición geográfica.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const target = window as unknown as Record<string, unknown>
+    target.__shops = shops
+  }, [shops])
 
   // rótulos heredados de la red (cuando no hay comunidad seleccionada)
   const labelled = useMemo(() => {
@@ -195,7 +209,13 @@ export const NetworkScene = memo(function NetworkScene({
       <DataPulses routes={routes} />
 
       {labelled.map((shop) => (
-        <Shop key={shop.id} shop={shop} />
+        // El grupo lleva el identificador del comercio: sirve para
+        // inspeccionar la escena desde la consola y comprobar que cada
+        // edificio está sobre su coordenada. La posición la aplica el
+        // propio edificio.
+        <group key={shop.id} name={shop.id}>
+          <Shop shop={shop} />
+        </group>
       ))}
 
       <Pedestal position={PEDESTAL_POSITION} accent={accent} />

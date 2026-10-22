@@ -50,6 +50,7 @@ export function FraudScene({
     whatsapp: { device: 'phone', accent: '#2fb87c', badge: '!' },
     bank: { device: 'laptop', accent: '#9b6ef0', badge: '!' },
     receipt: { device: 'card', accent: '#e9a13b', badge: '?' },
+    card: { device: 'card', accent: '#5b7cf5', badge: '?' },
     shop: { device: 'laptop', accent: '#e0629b', badge: '!' },
     job: { device: 'laptop', accent: '#3d8ee0', badge: '!' },
     investment: { device: 'card', accent: '#f0601f', badge: '!' },

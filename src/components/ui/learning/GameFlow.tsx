@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { GameIntro, Scenario, Verdict } from '../../../data/learning/types'
+import { GAME_BADGES } from '../../../lib/learning/engine'
 import { FraudScene, ScenarioVisualView, SimulatedTag } from './Visuals'
 import { type FlowStep } from './useGameFlow'
 
@@ -24,6 +25,11 @@ const STEP_LABELS: { id: FlowStep; label: string }[] = [
   { id: 'feedback', label: 'Resultado' },
   { id: 'summary', label: 'Cierre' },
 ]
+
+/** Los resúmenes reciben ids; la interfaz muestra el nombre legible. */
+const BADGE_LABELS: Record<string, string> = Object.fromEntries(
+  GAME_BADGES.map((badge) => [badge.id, badge.label]),
+)
 
 export function ProgressIndicator({
   step,
@@ -363,7 +369,14 @@ export function GameSummary({
   badges,
 }: {
   title: string
-  score: { correct: number; total: number; points: number; partial?: number; incorrect?: number }
+  score: {
+    correct: number
+    total: number
+    points: number
+    partial?: number
+    insufficient?: number
+    incorrect?: number
+  }
   learning: string
   signals: string[]
   recommendation: string
@@ -400,6 +413,7 @@ export function GameSummary({
             <p className="mt-1.5 text-[10.5px] font-bold text-[#8aa0c4]">
               {score.points} puntos
               {score.partial ? ` · ${score.partial} parciales` : ''}
+              {score.insufficient ? ` · ${score.insufficient} con información insuficiente` : ''}
               {score.incorrect ? ` · ${score.incorrect} de riesgo` : ''}
             </p>
           </div>
@@ -412,7 +426,7 @@ export function GameSummary({
                 key={badge}
                 className="rounded-full bg-[#eefbf3] px-2.5 py-1 text-[10px] font-extrabold text-[#1d7a53] ring-1 ring-[#bfe3d1]"
               >
-                {badge}
+                {BADGE_LABELS[badge] ?? badge}
               </li>
             ))}
           </ul>
