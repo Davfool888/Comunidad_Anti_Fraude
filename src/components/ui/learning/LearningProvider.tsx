@@ -3,10 +3,13 @@ import type { ReactNode } from 'react'
 import {
   applyPlan,
   applyResult,
+  completeRouteLesson,
   EMPTY_STATE,
   type GameStore,
   localGameStore,
   type LearningState,
+  setActiveRoute,
+  startRouteLesson,
   summarizeLearning,
 } from '../../../lib/learning/progress'
 import type { GameResult } from '../../../lib/learning/engine'
@@ -45,6 +48,18 @@ export function LearningProvider({
     setState((current) => applyPlan(current, plan))
   }, [])
 
+  const markLesson = useCallback((lessonId: string, routeId: string, gameId: string) => {
+    setState((current) => completeRouteLesson(current, { lessonId, routeId, gameId }).state)
+  }, [])
+
+  const startLesson = useCallback((lessonId: string) => {
+    setState((current) => startRouteLesson(current, lessonId))
+  }, [])
+
+  const startRoute = useCallback((routeId: string | null) => {
+    setState((current) => setActiveRoute(current, routeId))
+  }, [])
+
   const reset = useCallback(() => {
     store.clear()
     setState(EMPTY_STATE)
@@ -56,9 +71,12 @@ export function LearningProvider({
       summary: summarizeLearning(state, GAMES.length),
       finishGame,
       savePlan,
+      markLesson,
+      startLesson,
+      startRoute,
       reset,
     }),
-    [state, finishGame, savePlan, reset],
+    [state, finishGame, savePlan, markLesson, startLesson, startRoute, reset],
   )
 
   return <LearningContext.Provider value={value}>{children}</LearningContext.Provider>

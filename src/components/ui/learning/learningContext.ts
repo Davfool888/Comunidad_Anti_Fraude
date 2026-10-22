@@ -16,6 +16,12 @@ export type LearningContextValue = {
   finishGame: (result: GameResult, gameId: string) => string[]
   /** Guarda el plan de proteccion elegido. */
   savePlan: (plan: string[]) => void
+  /** Marca una lección de ruta como completada. */
+  markLesson: (lessonId: string, routeId: string, gameId: string) => void
+  /** Marca una lección de ruta como abierta. */
+  startLesson: (lessonId: string) => void
+  /** Recuerda la ruta que el usuario está siguiendo. */
+  startRoute: (routeId: string | null) => void
   /** Reinicia todo el progreso. */
   reset: () => void
 }

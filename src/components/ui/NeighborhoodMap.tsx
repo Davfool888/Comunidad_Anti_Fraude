@@ -1,8 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Community, CommunityNetwork } from '../../data/networks'
 import type { HousePoint } from '../../data/houses'
+import { buildCommunityShops, placeShopCard } from '../../lib/communityMap'
 import { STYLE_BY_BUSINESS } from '../three/network/arrangement'
 import type { ShopStyle } from '../three/network/palette'
 import { isoBuildingSvg, type IsoColors } from './isoBuilding'
@@ -17,15 +24,18 @@ import {
 
 /**
  * **Mapa 2**: la comunidad de barrio vista de cerca, con los comercios de la
- * red colocados **encima de las casas reales** de esa zona.
+ * red colocados sobre construcciones reales de la zona.
  *
- * Las posiciones vienen de OpenStreetMap. Si el servicio no responde, se usa
- * una distribución de respaldo alrededor del centro del barrio, de modo que
- * la vista nunca queda vacía.
+ * La capa visual reutiliza los comercios que ya existen en `community` y les
+ * asigna construcciones del barrio con una selección determinista y repartida.
+ * El anclaje viene de OpenStreetMap cuando está disponible; si el servicio no
+ * responde, se usa la distribución aproximada que ya calcula el proyecto y se
+ * indica en pantalla. Los comercios son registros ficticios de demostración:
+ * no se presentan como establecimientos reales ni como verificados.
  *
- * El mapa se puede acercar hasta el **nivel de casa**: las teselas nativas
- * llegan al zoom 19 y, a partir de ahí, el navegador reescala la última
- * tesela, así que se distinguen las viviendas y las vías pequeñas.
+ * El mapa puede acercarse hasta el nivel de casa. La tarjeta informativa se
+ * calcula a partir de la posición proyectada del marcador, así que permanece
+ * unida a su coordenada al mover, acercar o cambiar el tamaño de la ventana.
  */
 
 /** Zoom al que se abre el mapa del barrio. */
@@ -39,43 +49,102 @@ const MAX_ZOOM = 21
 
 /** Zoom mínimo: el barrio completo dentro de la ciudad. */
 const MIN_ZOOM = 15
+
+/** Ancho máximo de la tarjeta. */
+const CARD_WIDTH = 286
+
+/** Alto de reserva mientras se mide la tarjeta real. */
+const CARD_HEIGHT = 252
+
+/** Convierte texto dinámico en HTML seguro para el `divIcon` de Leaflet. */
+function escapeHtml(value: string): string {
+  const entities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }
+  return value.replace(/[&<>"']/g, (character) => entities[character] ?? character)
+}
+
+/** Estilo de edificio que corresponde a cada tipo de comercio. */
+function shopStyle(business: string): ShopStyle {
+  return STYLE_BY_BUSINESS[business] ?? 'grocery'
+}
+
 export function NeighborhoodMap({
   network,
   community,
-  anchors,
+  houses,
   loading,
   source,
   className = '',
 }: {
   network: CommunityNetwork
   community: Community
-  /** Casas donde se colocan los comercios (reales o aproximadas). */
-  anchors: HousePoint[]
-  /** true mientras se consultan las casas reales. */
+  /** Construcciones válidas del barrio (reales o aproximadas). */
+  houses: HousePoint[]
+  /** true mientras se consultan las construcciones reales. */
   loading: boolean
   /** De dónde vienen los anclajes. */
   source: 'openstreetmap' | 'aproximado'
   className?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const frameRef = useRef<HTMLDivElement>(null)
+  const cardRef = useRef<HTMLElement>(null)
   const mapRef = useRef<L.Map | null>(null)
-  const markersRef = useRef<L.Marker[]>([])
+  const markersRef = useRef<Map<string, L.Marker>>(new Map())
+  const hoverTimerRef = useRef<number | null>(null)
 
-  /** Los comercios de la comunidad, con su tipo de edificio. */
-  const shops = useMemo(
-    () =>
-      community.businesses.map((business, index) => ({
-        id: `${community.id}-shop-${index}`,
-        name: business.name,
-        business: business.business,
-        label: business.label,
-        satisfaction: business.satisfaction,
-        index,
-      })),
-    [community.businesses, community.id],
+  const [styleId, setStyleId] = useState<MapStyleId>('claro')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [anchorPoint, setAnchorPoint] = useState<{ x: number; y: number } | null>(null)
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 })
+  const [cardSize, setCardSize] = useState({ width: CARD_WIDTH, height: CARD_HEIGHT })
+
+  /**
+   * Los comercios visibles salen de la fuente que ya existe en la comunidad.
+   * No se crean establecimientos nuevos: sólo se elige un anclaje distinto
+   * para cada uno dentro de las construcciones del barrio.
+   */
+  const selection = useMemo(
+    () => buildCommunityShops(community, houses, source),
+    [community, houses, source],
+  )
+  const shops = selection.shops
+
+  const displayId = hoveredId ?? selectedId
+  const activeShop = useMemo(
+    () => shops.find((shop) => shop.id === displayId) ?? null,
+    [shops, displayId],
   )
 
-  // Crea el mapa
+  const cancelHoverClose = useCallback(() => {
+    if (hoverTimerRef.current === null) return
+    window.clearTimeout(hoverTimerRef.current)
+    hoverTimerRef.current = null
+  }, [])
+
+  const scheduleHoverClose = useCallback(() => {
+    cancelHoverClose()
+    hoverTimerRef.current = window.setTimeout(() => {
+      hoverTimerRef.current = null
+      setHoveredId(null)
+    }, 180)
+  }, [cancelHoverClose])
+
+  const closeCard = useCallback(() => {
+    cancelHoverClose()
+    setHoveredId(null)
+    setSelectedId(null)
+  }, [cancelHoverClose])
+
+  useEffect(() => cancelHoverClose, [cancelHoverClose])
+
+  // Crea el mapa una sola vez por barrio.
   useEffect(() => {
     const container = containerRef.current
     if (!container || mapRef.current) return
@@ -92,6 +161,24 @@ export function NeighborhoodMap({
     })
 
     mapRef.current = map
+    const markerStore = markersRef.current
+
+    // Escala visual de los edificios según el zoom. Tiene límites para que
+    // sigan siendo reconocibles sin tapar las calles ni crecer sin fin.
+    const updateScale = () => {
+      const zoom = map.getZoom()
+      const scale = Math.max(0.6, Math.min(1.16, 0.6 + (zoom - MIN_ZOOM) * 0.14))
+      container.style.setProperty('--ns-zoom-scale', scale.toFixed(3))
+    }
+    updateScale()
+    map.on('zoomend', updateScale)
+
+    // La escena ocupa todo el panel: al cambiar el tamaño se recalcula el
+    // tamaño interno de Leaflet sin perder el centro ni el zoom.
+    const resizeObserver = new ResizeObserver(() => {
+      map.invalidateSize({ animate: false })
+    })
+    resizeObserver.observe(container)
 
     // Sonda de desarrollo: permite inspeccionar el mapa desde la consola
     if (import.meta.env.DEV) {
@@ -104,19 +191,20 @@ export function NeighborhoodMap({
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map)
 
     return () => {
+      map.off('zoomend', updateScale)
+      resizeObserver.disconnect()
       map.remove()
       mapRef.current = null
-      markersRef.current = []
+      markerStore.clear()
     }
   }, [community.id, community.lat, community.lng])
 
-  // Estilo de mapa: claro, calles o satélite
-  const [styleId, setStyleId] = useState<MapStyleId>('claro')
+  // Estilo de mapa: claro, calles o satélite.
   const style = MAP_STYLES.find((item) => item.id === styleId) ?? MAP_STYLES[0]
   const styleRef = useRef<MapStyle>(style)
   const layersRef = useRef<StyleLayers | null>(null)
 
-  // Crea las capas de teselas con el estilo activo
+  // Crea las capas de teselas con el estilo activo.
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -130,83 +218,231 @@ export function NeighborhoodMap({
     }
   }, [community.id])
 
-  // Cambia de estilo sin rehacer las capas: el zoom y el centro se conservan
+  // Cambia de estilo sin rehacer las capas: el zoom y el centro se conservan.
   useEffect(() => {
     if (styleRef.current.id === style.id) return
     styleRef.current = style
     layersRef.current?.setStyle(style)
   }, [style])
 
-  // Coloca los comercios sobre las casas reales
+  // Coloca los modelos sobre sus anclajes y libera los marcadores anteriores.
   useEffect(() => {
     const map = mapRef.current
-    if (!map || anchors.length === 0) return
+    if (!map) return
 
-    markersRef.current.forEach((marker) => marker.remove())
-    markersRef.current = []
+    const clearMarkers = () => {
+      markersRef.current.forEach((marker) => marker.remove())
+      markersRef.current.clear()
+    }
+
+    clearMarkers()
+
+    if (shops.length === 0) {
+      return clearMarkers
+    }
 
     shops.forEach((shop, index) => {
-      const house = anchors[index % anchors.length]
-      if (!house) return
-
       const skin = SKINS[index % SKINS.length]
-      const style = (STYLE_BY_BUSINESS[shop.business] ?? 'grocery') as ShopStyle
+      const style = shopStyle(shop.business)
+      const html = `
+        <button
+          type="button"
+          class="ns-shop-marker__button"
+          aria-label="Ver información de ${escapeHtml(shop.name)}, ${escapeHtml(shop.business)}"
+          aria-controls="ns-shop-card"
+          aria-expanded="false"
+        >
+          <span class="ns-shop-marker__box">
+            ${isoBuildingSvg(style, skin)}
+            <span class="ns-shop-marker__base" aria-hidden="true"></span>
+          </span>
+        </button>
+      `
+
       const icon = L.divIcon({
-        className: 'ns-iso-marker',
-        html: `<div class="ns-iso-marker__box">${isoBuildingSvg(style, skin)}</div>`,
-        iconSize: [46, 54],
-        iconAnchor: [23, 50],
+        className: 'ns-shop-marker',
+        html,
+        iconSize: [56, 66],
+        iconAnchor: [28, 60],
       })
 
-      const marker = L.marker([house.lat, house.lng], { icon, keyboard: true, title: shop.name })
-        .addTo(map)
+      const marker = L.marker([shop.lat, shop.lng], {
+        icon,
+        // El botón interior es el elemento accesible; el marcador de Leaflet
+        // no añade un segundo tabulador.
+        keyboard: false,
+        title: shop.name,
+        bubblingMouseEvents: false,
+        riseOnHover: true,
+      }).addTo(map)
 
-      marker.bindTooltip(
-        `<span class="ns-iso-tooltip__name">${shop.name}</span><span class="ns-iso-tooltip__label">${shop.label} · verificado</span>`,
-        { direction: 'top', offset: [0, -44], className: 'ns-iso-tooltip', sticky: true },
-      )
-      marker.on('click', () => {
-        marker.setZIndexOffset(1000)
-        window.setTimeout(() => marker.setZIndexOffset(0), 1800)
+      const show = () => {
+        cancelHoverClose()
+        setHoveredId(shop.id)
+      }
+
+      marker.on('mouseover', show)
+      marker.on('mouseout', scheduleHoverClose)
+      marker.on('click', (event) => {
+        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent)
+        cancelHoverClose()
+        setHoveredId(null)
+        setSelectedId((current) => (current === shop.id ? null : shop.id))
       })
 
-      markersRef.current.push(marker)
+      // El foco del botón también abre la ficha, igual que el hover.
+      const button = marker.getElement()?.querySelector('button')
+      button?.addEventListener('focus', show)
+      button?.addEventListener('blur', scheduleHoverClose)
+
+      markersRef.current.set(shop.id, marker)
     })
 
-    // Ajusta el encuadre a las construcciones usadas
-    const used = anchors.slice(0, shops.length)
-    if (used.length) {
-      // Cancela cualquier animación pendiente del mapa
+    // Ajusta el encuadre a los modelos usados, no a todas las casas.
+    const points = shops.map(
+      (shop) => [shop.lat, shop.lng] as [number, number],
+    )
+    if (points.length > 0) {
       map.stop()
-      map.fitBounds(
-        L.latLngBounds(used.map((house) => [house.lat, house.lng] as [number, number])),
-        { padding: [56, 56], maxZoom: INITIAL_ZOOM, animate: false },
-      )
-      // La vista siempre queda a nivel de casa: ni tan lejos que no se vean
-      // las viviendas ni tan cerca que se pierdan los comercios.
+      map.fitBounds(L.latLngBounds(points), {
+        padding: [64, 64],
+        maxZoom: INITIAL_ZOOM,
+        animate: false,
+      })
       if (map.getZoom() < CLOSE_ZOOM) {
         map.setZoom(CLOSE_ZOOM, { animate: false })
       }
     }
-  }, [anchors, shops])
+
+    return clearMarkers
+  }, [shops, cancelHoverClose, scheduleHoverClose])
+
+  // Refleja la selección y el hover en los marcadores ya creados.
+  useEffect(() => {
+    markersRef.current.forEach((marker, id) => {
+      const element = marker.getElement()
+      if (!element) return
+
+      element.classList.toggle('ns-shop-marker--selected', id === selectedId)
+      element.classList.toggle('ns-shop-marker--hovered', id === hoveredId)
+      marker.setZIndexOffset(id === selectedId ? 1200 : id === hoveredId ? 600 : 0)
+      const button = element.querySelector('button')
+      button?.setAttribute('aria-expanded', String(id === selectedId))
+    })
+  }, [selectedId, hoveredId, shops])
+
+  // Tamaño del marco: se usa para colocar la tarjeta sin salirse del mapa.
+  useEffect(() => {
+    const frame = frameRef.current
+    if (!frame) return
+
+    const measure = () => {
+      setFrameSize({ width: frame.clientWidth, height: frame.clientHeight })
+    }
+    measure()
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(frame)
+    return () => observer.disconnect()
+  }, [])
+
+  // Proyecta la coordenada del comercio activo sobre el contenedor del mapa.
+  // Se actualiza con el desplazamiento y el zoom, con un frame de margen para
+  // no renderizar más de lo necesario.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !activeShop) {
+      setAnchorPoint(null)
+      return
+    }
+
+    let frame = 0
+    const update = () => {
+      const point = map.latLngToContainerPoint([activeShop.lat, activeShop.lng])
+      setAnchorPoint({ x: point.x, y: point.y })
+    }
+    const schedule = () => {
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        update()
+      })
+    }
+
+    update()
+    map.on('move zoom resize viewreset', schedule)
+    window.addEventListener('resize', schedule)
+
+    return () => {
+      map.off('move zoom resize viewreset', schedule)
+      window.removeEventListener('resize', schedule)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [activeShop])
+
+  // Mide la ficha real: el alto cambia con el contenido y con el ancho móvil.
+  useEffect(() => {
+    if (!activeShop) return
+    const card = cardRef.current
+    if (!card) return
+
+    const measure = () => {
+      setCardSize({ width: card.offsetWidth, height: card.offsetHeight })
+    }
+    measure()
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(card)
+    return () => observer.disconnect()
+  }, [activeShop])
+
+  const cardWidth = Math.min(CARD_WIDTH, Math.max(180, frameSize.width - 24))
+  const placement =
+    activeShop && anchorPoint && frameSize.width > 0
+      ? placeShopCard({
+          anchorX: anchorPoint.x,
+          anchorY: anchorPoint.y,
+          viewportWidth: frameSize.width,
+          viewportHeight: frameSize.height,
+          cardWidth,
+          cardHeight: cardSize.height || CARD_HEIGHT,
+        })
+      : null
 
   return (
-    <div className={`relative h-full w-full ${className}`}>
+    <div
+      ref={frameRef}
+      className={`relative h-full w-full ${className}`}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') closeCard()
+      }}
+    >
       <div ref={containerRef} className="ns-map h-full w-full bg-[#dfe9fb]" />
 
-      {/* etiqueta de la simulación */}
-      <div className="pointer-events-none absolute top-3 left-3 z-[500] flex flex-col items-start gap-2">
+      {/* etiqueta de la simulación y estado de los datos */}
+      <div className="pointer-events-none absolute top-3 left-3 z-[500] flex max-w-[280px] flex-col items-start gap-2">
         <SimulatedTag />
-        <span className="rounded-full bg-white/85 px-2.5 py-1 text-[10px] font-bold text-[#4a628f] shadow-sm">
+        <span
+          role="status"
+          className="rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-bold text-[#4a628f] shadow-sm backdrop-blur"
+        >
           {loading
-            ? 'Buscando las casas de la zona…'
+            ? 'Buscando las construcciones del barrio…'
             : source === 'openstreetmap'
-              ? `Casas reales de ${community.name} (OpenStreetMap)`
-              : `Ubicación aproximada de ${community.name}`}
+              ? 'Comercios de demostración sobre construcciones de OpenStreetMap'
+              : 'Comercios de demostración con ubicación aproximada'}
         </span>
-        <span className="rounded-full bg-white/85 px-2.5 py-1 text-[10px] font-bold text-[#4a628f] shadow-sm">
-          Acércate para ver las casas y las vías
+        <span className="rounded-full bg-white/85 px-2.5 py-1 text-[10px] font-bold text-[#4a628f] shadow-sm backdrop-blur">
+          {loading
+            ? `${shops.length} comercios visibles mientras llegan los datos`
+            : `${shops.length} de ${selection.totalBusinesses} comercios con ubicación`}
         </span>
+        {!loading && selection.coverage === 'parcial' && shops.length > 0 && (
+          <span className="rounded-xl border border-[#f1d49a] bg-[#fff8e8]/95 px-2.5 py-1.5 text-[9.5px] leading-snug font-semibold text-[#8b6417] shadow-sm backdrop-blur">
+            Cobertura parcial: sólo {shops.length} de {selection.totalBusinesses}{' '}
+            comercios tienen una coordenada válida. No se inventan ubicaciones.
+          </span>
+        )}
       </div>
 
       {/* estilos de mapa: claro, calles o satélite */}
@@ -216,7 +452,7 @@ export function NeighborhoodMap({
             key={item.id}
             type="button"
             onClick={() => setStyleId(item.id)}
-            className={`rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors duration-200 ${
+            className={`rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5b7cf5] ${
               styleId === item.id
                 ? 'bg-gradient-to-r from-[#5b7cf5] to-[#9b6ef0] text-white shadow-[0_8px_18px_-10px_rgba(80,90,220,.9)]'
                 : 'text-[#5d76a6] hover:bg-white'
@@ -227,8 +463,116 @@ export function NeighborhoodMap({
         ))}
       </div>
 
+      {/* estado vacío: no hay coordenadas válidas para esta comunidad */}
+      {!loading && shops.length === 0 && (
+        <div className="pointer-events-none absolute inset-0 z-[450] grid place-items-center">
+          <div className="max-w-[320px] rounded-2xl border border-white/70 bg-white/90 px-4 py-3 text-center shadow-[0_18px_40px_-24px_rgba(30,55,130,.8)] backdrop-blur">
+            <p className="text-[12px] font-extrabold text-[#243d6b]">Sin datos para esta zona</p>
+            <p className="mt-1 text-[10.5px] font-semibold text-[#5d76a6]">
+              No se identificaron construcciones con coordenadas válidas. Los
+              datos dependen de la cobertura de OpenStreetMap.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* tarjeta informativa: una sola a la vez, anclada a su marcador */}
+      {activeShop && placement && frameSize.width > 0 && (
+        <article
+          id="ns-shop-card"
+          ref={cardRef}
+          role="group"
+          aria-label={`Información de ${activeShop.name}`}
+          className="ns-shop-card pointer-events-auto absolute z-[650] rounded-2xl border border-[#dbe7f8] bg-white/97 p-3 shadow-[0_22px_48px_-20px_rgba(22,45,95,.7)] backdrop-blur-xl"
+          style={{
+            left: placement.left,
+            top: placement.top,
+            width: cardWidth,
+            transform: 'translateX(-50%)',
+          }}
+          onPointerEnter={cancelHoverClose}
+          onPointerLeave={scheduleHoverClose}
+          onFocus={cancelHoverClose}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              scheduleHoverClose()
+            }
+          }}
+        >
+          <span
+            aria-hidden="true"
+            className={`absolute h-3 w-3 rotate-45 bg-white ${
+              placement.side === 'above'
+                ? '-bottom-1.5 border-r border-b border-[#dbe7f8]'
+                : '-top-1.5 border-t border-l border-[#dbe7f8]'
+            }`}
+            style={{ left: placement.arrowX - 6 }}
+          />
+
+          <div className="flex items-start gap-2.5">
+            <span
+              className="ns-shop-card__icon grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[#eef4fd]"
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{
+                __html: isoBuildingSvg(
+                  shopStyle(activeShop.business),
+                  SKINS[Math.max(0, shops.findIndex((shop) => shop.id === activeShop.id)) % SKINS.length],
+                ),
+              }}
+            />
+
+            <div className="min-w-0 flex-1">
+              <span className="inline-flex rounded-full bg-[#fff4e2] px-2 py-0.5 text-[8.5px] font-extrabold tracking-[0.09em] text-[#a86a12] uppercase">
+                Comercio de demostración
+              </span>
+              <h3 className="mt-1 text-[13px] leading-tight font-extrabold text-[#243d6b]">
+                {activeShop.name}
+              </h3>
+              <p className="mt-0.5 text-[10px] font-bold text-[#7b90b5]">
+                {activeShop.business}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={closeCard}
+              aria-label="Cerrar la información del comercio"
+              className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[#7b90b5] transition-colors hover:bg-[#eef4fd] hover:text-[#243d6b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5b7cf5]"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          <dl className="mt-2.5 space-y-1.5 border-t border-[#e8eef9] pt-2.5">
+            <div className="grid grid-cols-[64px_1fr] gap-2">
+              <dt className="text-[9px] font-extrabold tracking-[0.08em] text-[#8da1c2] uppercase">Comunidad</dt>
+              <dd className="text-[10.5px] leading-snug font-semibold text-[#3b527e]">{community.name}</dd>
+            </div>
+            <div className="grid grid-cols-[64px_1fr] gap-2">
+              <dt className="text-[9px] font-extrabold tracking-[0.08em] text-[#8da1c2] uppercase">Ubicación</dt>
+              <dd className="text-[10.5px] leading-snug font-semibold text-[#3b527e]">
+                {activeShop.locationLabel}
+              </dd>
+            </div>
+            <div className="grid grid-cols-[64px_1fr] gap-2">
+              <dt className="text-[9px] font-extrabold tracking-[0.08em] text-[#8da1c2] uppercase">Red</dt>
+              <dd className="text-[10.5px] leading-snug font-semibold text-[#8b6417]">
+                No verificado en la red comunitaria
+              </dd>
+            </div>
+          </dl>
+
+          <p className="mt-2 text-[8.5px] leading-snug font-medium text-[#9aabc7]">
+            Nombre y datos ficticios. No corresponden a un establecimiento real;
+            la ubicación es aproximada.
+          </p>
+        </article>
+      )}
+
       {/* datos de la comunidad */}
-      <div className="pointer-events-none absolute right-3 bottom-3 z-[500] max-w-[260px] rounded-2xl border border-white/70 bg-white/85 p-3 shadow-[0_18px_40px_-24px_rgba(30,55,130,.8)] backdrop-blur">
+      <div className="pointer-events-none absolute right-3 bottom-3 z-[500] max-w-[260px] rounded-2xl border border-white/70 bg-white/90 p-3 shadow-[0_18px_40px_-24px_rgba(30,55,130,.8)] backdrop-blur">
         <p className="text-[9.5px] font-extrabold tracking-[0.12em] text-[#7a90b8] uppercase">
           Comunidad
         </p>
@@ -237,7 +581,12 @@ export function NeighborhoodMap({
           {network.neighborhood} · {network.commune}
         </p>
         <p className="mt-1.5 text-[10.5px] font-semibold text-[#5d76a6]">
-          {shops.length} comercios · {community.stats.merchants} verificados
+          {shops.length} de {selection.totalBusinesses} comercios en el mapa
+        </p>
+        <p className="text-[9.5px] font-semibold text-[#8aa0c4]">
+          {source === 'openstreetmap'
+            ? 'Anclaje sobre construcciones de OpenStreetMap'
+            : 'Anclaje aproximado de demostración'}
         </p>
         <p className="mt-2 text-[8.5px] font-medium text-[#9db0cd]">{style.attribution}</p>
       </div>
@@ -251,6 +600,7 @@ export function NeighborhoodMap({
 
 /**
  * Paletas con las que se tiñen los edificios del mapa.
+ * Se reutilizan los tonos de la escena isométrica.
  */
 const SKINS: IsoColors[] = [
   { color: '#ff9dc0', soft: '#ffc4d8', deep: '#e0648f', wall: '#fff6ec', awning: ['#ffffff', '#ff9dc0'] },

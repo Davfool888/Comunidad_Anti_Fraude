@@ -2,7 +2,6 @@
 import type { Community, CommunityNetwork } from '../../data/networks'
 import type { HousePoint } from '../../data/houses'
 import { NetworkCanvas } from '../three/network/NetworkCanvas'
-import { NetworkStatsPanel } from './NetworkStatsPanel'
 
 /**
  * El mini-mapa usa Leaflet: se carga en diferido para no meter la librería
@@ -107,11 +106,6 @@ export function NetworkHero({
           </div>
         </div>
 
-        {/* panel de estadísticas: flotante en escritorio */}
-        <div className="pointer-events-none absolute top-[76px] right-7 z-20 hidden lg:block">
-          <NetworkStatsPanel network={network} community={activeCommunity ?? undefined} />
-        </div>
-
         {/* botón que abre el chat de la comunidad (panel izquierdo) */}
         <button
           type="button"
@@ -143,11 +137,6 @@ export function NetworkHero({
               'linear-gradient(180deg, rgba(238,244,253,0) 0%, rgba(238,244,253,.35) 34%, rgba(238,244,253,.8) 64%, rgba(238,244,253,.97) 86%, rgba(238,244,253,1) 100%)',
           }}
         />
-      </div>
-
-      {/* en móvil el panel baja a un bloque propio para no tapar la escena */}
-      <div className="mx-auto w-full max-w-[420px] px-4 pt-8 lg:hidden">
-        <NetworkStatsPanel network={network} community={activeCommunity ?? undefined} />
       </div>
     </section>
   )

@@ -255,6 +255,7 @@ export function addStyleLayers(map: L.Map, style: MapStyle, maxZoom: number): St
   return {
     setStyle: (next: MapStyle) => {
       base.setUrl(next.url)
+      base.options.maxNativeZoom = next.maxNativeZoom
       applyLabels(next)
     },
     remove: () => {

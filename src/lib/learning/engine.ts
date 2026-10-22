@@ -1,6 +1,6 @@
-import { LEARNING_CATEGORIES } from '../../data/learning/categories'
-import type { Option, Verdict } from '../../data/learning/types'
-import { VERDICT_POINTS } from '../../data/learning/types'
+import { LEARNING_CATEGORIES } from '../../data/learning/categories.ts'
+import type { Option, Verdict } from '../../data/learning/types.ts'
+import { VERDICT_POINTS } from '../../data/learning/types.ts'
 
 /**
  * Motor de evaluación común a todos los juegos.
@@ -37,6 +37,8 @@ export type GameResult = {
   score: number
   correct: number
   partial: number
+  /** Respuestas que reconocieron que faltaba información. */
+  insufficient?: number
   incorrect: number
   answered: number
   total: number
@@ -54,6 +56,7 @@ export class GameScorer {
   total: number
   private correct = 0
   private partial = 0
+  private insufficient = 0
   private incorrect = 0
   private score = 0
   private byCategory: Record<string, { correct: number; total: number }> = {}
@@ -79,6 +82,13 @@ export class GameScorer {
       this.review.push(itemId)
       return
     }
+    if (answer.verdict === 'insufficient') {
+      // Saber que falta información es una respuesta válida, no un fallo.
+      this.insufficient += 1
+      this.partial += 1
+      this.review.push(itemId)
+      return
+    }
     this.incorrect += 1
     this.review.push(itemId)
   }
@@ -95,6 +105,7 @@ export class GameScorer {
       score: this.score,
       correct: this.correct,
       partial: this.partial,
+      insufficient: this.insufficient,
       incorrect: this.incorrect,
       answered: this.correct + this.partial + this.incorrect,
       total: this.total,
@@ -132,9 +143,8 @@ export const GAME_BADGES: GameBadge[] = [
   {
     id: 'detective-digital',
     label: 'Detective digital',
-    description: 'Completaste los primeros tres casos de investigación.',
-    requires: (progress) =>
-      ['dete-1', 'dete-2', 'dete-3'].every((id) => progress[id]?.completed),
+    description: 'Completaste el juego de investigación de mensajes y anuncios.',
+    requires: (progress) => progress['detectives']?.completed === true,
   },
   {
     id: 'guardian-cuentas',
@@ -146,20 +156,27 @@ export const GAME_BADGES: GameBadge[] = [
     id: 'investigador-responsable',
     label: 'Investigador responsable',
     description: 'Completaste el laboratorio de evidencias.',
-    requires: (progress) => progress['lab-1']?.completed === true,
+    requires: (progress) => progress['laboratorio']?.completed === true,
   },
   {
     id: 'comprador-prevenido',
     label: 'Comprador prevenido',
     description: 'Resolviste los casos de compras y comprobantes.',
     requires: (progress) =>
-      ['cmp-1', 'cmp-2', 'ven-1', 'ven-2'].some((id) => progress[id]?.completed),
+      progress['diferencias']?.completed === true || progress['historias']?.completed === true,
   },
   {
     id: 'experto-verificacion',
     label: 'Experto en verificacion',
     description: 'Completaste el desafio de pensamiento critico.',
     requires: (progress) => progress['vf-desafio']?.completed === true,
+  },
+  {
+    id: 'datos-protegidos',
+    label: 'Datos protegidos',
+    description:
+      'Completaste la anatomía de una tarjeta e identificaste los datos que conviene proteger.',
+    requires: (progress) => progress['anatomia-tarjeta']?.completed === true,
   },
 ]
 

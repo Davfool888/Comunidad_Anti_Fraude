@@ -37,7 +37,10 @@ export function CommunityStage({
   const [view, setView] = useState<'mapa' | 'isometrica'>('mapa')
 
   // Una sola consulta de casas por barrio: la usan el mapa y la escena 3D.
-  const { anchors, loading, source } = useCommunityHouses(community, community?.businesses.length ?? 8)
+  const { houses, anchors, loading, source } = useCommunityHouses(
+    community,
+    community?.businesses.length ?? 8,
+  )
 
   return (
     <div className="relative h-[100svh] min-h-[560px] w-full overflow-hidden">
@@ -51,9 +54,10 @@ export function CommunityStage({
             }
           >
             <NeighborhoodMap
+              key={community.id}
               network={network}
               community={community}
-              anchors={anchors}
+              houses={houses}
               loading={loading}
               source={source}
               className="absolute inset-0"
@@ -74,8 +78,12 @@ export function CommunityStage({
         />
       )}
 
-      {/* conmutador de vista */}
-      <div className="pointer-events-auto absolute top-3 left-1/2 z-[600] flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/85 p-1 shadow-[0_12px_28px_-16px_rgba(30,55,130,.8)] backdrop-blur-xl">
+      {/* conmutador de vista: arriba a la derecha, debajo de la navegación */}
+      <div
+        role="group"
+        aria-label="Cambiar entre mapa de barrio y vista isométrica"
+        className="pointer-events-auto absolute top-32 right-4 z-[600] flex items-center gap-1 rounded-full bg-white/85 p-1 shadow-[0_12px_28px_-16px_rgba(30,55,130,.8)] backdrop-blur-xl sm:top-24 sm:right-6 lg:top-[76px] lg:right-7"
+      >
         {(
           [
             { id: 'mapa', label: 'Mapa del barrio' },
@@ -86,7 +94,8 @@ export function CommunityStage({
             key={option.id}
             type="button"
             onClick={() => setView(option.id)}
-            className={`rounded-full px-3.5 py-1.5 text-[11.5px] font-bold transition-colors duration-200 ${
+            aria-pressed={view === option.id}
+            className={`rounded-full px-3.5 py-1.5 text-[11.5px] font-bold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5b7cf5] ${
               view === option.id
                 ? 'bg-gradient-to-r from-[#5b7cf5] to-[#9b6ef0] text-white shadow-[0_8px_18px_-10px_rgba(80,90,220,.9)]'
                 : 'text-[#5d76a6] hover:bg-white'
