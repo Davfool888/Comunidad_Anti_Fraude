@@ -1,5 +1,6 @@
 ﻿import { Suspense, lazy } from 'react'
 import type { Community, CommunityNetwork } from '../../data/networks'
+import type { HousePoint } from '../../data/houses'
 import { NetworkCanvas } from '../three/network/NetworkCanvas'
 import { NetworkStatsPanel } from './NetworkStatsPanel'
 
@@ -23,12 +24,15 @@ const NetworkMiniMap = lazy(() =>
 export function NetworkHero({
   network,
   community,
+  anchors,
   onOpenChat,
   chatOpen = false,
   className = '',
 }: {
   network: CommunityNetwork
   community?: Community | null
+  /** Casas reales donde están los comercios (OpenStreetMap). */
+  anchors?: HousePoint[]
   onOpenChat: () => void
   /** El chat está abierto: el mini-mapa se aparta para no quedar tapado. */
   chatOpen?: boolean
@@ -49,7 +53,12 @@ export function NetworkHero({
           }}
         />
 
-        <NetworkCanvas className="absolute inset-0" network={network} community={activeCommunity ?? undefined} />
+        <NetworkCanvas
+          className="absolute inset-0"
+          network={network}
+          community={activeCommunity ?? undefined}
+          anchors={anchors}
+        />
 
 
         {/* mini-mapa con la red activa, abajo a la izquierda */}

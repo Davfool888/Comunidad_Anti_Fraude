@@ -1,4 +1,6 @@
 import type { Community } from '../../../data/networks'
+import type { HousePoint } from '../../../data/houses'
+import { geographicShopPositions } from '../../../lib/shopPositions'
 import type { ShopSpec } from './layout'
 import { iso, type ShopStyle } from './palette'
 
@@ -13,6 +15,12 @@ import { iso, type ShopStyle } from './palette'
  * La geometría de la escena es fija (la cámara y el suelo), lo que cambia es
  * el reparto: qué edificio va en cada plaza, con qué arquitectura y con qué
  * paleta.
+ *
+ * Cuando se dispone de las **casas reales** del barrio (OpenStreetMap), los
+ * edificios ya no se reparten al azar por las plazas: cada uno se planta
+ * sobre la vivienda donde realmente está el comercio, respetando la
+ * distancia y la orientación geográficas. Sin esos datos se usa la
+ * disposition por plazas de siempre.
  */
 
 /* ------------------------------------------------------------------ */
@@ -251,11 +259,40 @@ function overlaps(a: [number, number, number], b: [number, number, number]) {
 /* Disposición                                                         */
 /* ------------------------------------------------------------------ */
 
+/** Ancho (en unidades de la escena) que ocupa el conjunto de comercios. */
+const GEO_SPAN = 22
+
+/** Radio libre alrededor del núcleo de seguridad: ahí no se planta nada. */
+const CORE_CLEARANCE = 6
+
+/**
+ * Calcula dónde plantar cada edificio cuando se conocen las casas reales
+ * del barrio.
+ *
+ * La proyección conserva la orientación (el norte queda al fondo) y la
+ * distancia relativa entre los edificios: dos comercios que en la realidad
+ * están en la misma cuadra siguen estándolo en la escena.
+ */
+function computeGeographicPositions(
+  anchors: HousePoint[] | undefined,
+  businessCount: number,
+): { x: number; z: number }[] | null {
+  return geographicShopPositions(anchors, businessCount, {
+    span: GEO_SPAN,
+    minDistance: PLATFORM_W + 0.6,
+    coreClearance: CORE_CLEARANCE,
+  })
+}
+
 /**
  * Construye la disposición de comercios de una comunidad: qué edificio va en
  * cada plaza, con qué tipo de negocio, con qué colores y con qué rótulo.
+ *
+ * @param anchors casas reales donde están los comercios. Si vienen, los
+ * edificios se plantan sobre ellas (posición geográfica real); si no, se
+ * reparte por las plazas de la escena.
  */
-export function arrangeShops(community: Community): ShopSpec[] {
+export function arrangeShops(community: Community, anchors?: HousePoint[]): ShopSpec[] {
   const random = seeded(hash(`${community.id}-arrangement`))
 
   // --- plazas: primero las independientes, luego las de reserva ---------
@@ -296,6 +333,12 @@ export function arrangeShops(community: Community): ShopSpec[] {
     skins[swap] = keep
   }
 
+  // --- posición real de cada comercio (si hay casas identificadas) ------
+  const geographicPositions = computeGeographicPositions(
+    anchors,
+    community.businesses.length,
+  )
+
   return community.businesses.map((business, index) => {
     const slot = chosen[index] ?? PRIMARY_SLOTS[index % PRIMARY_SLOTS.length]
     const skin = skins[index % skins.length]
@@ -305,10 +348,15 @@ export function arrangeShops(community: Community): ShopSpec[] {
     const jitterX = (random() - 0.5) * 0.24
     const jitterZ = (random() - 0.5) * 0.24
 
+    // Si el comercio tiene una casa real asignada, manda su posición.
+    const geographic = geographicPositions?.[index]
+
     return {
       id: `${community.id}-${business.id}`,
       label: business.label,
-      position: [slot[0] + jitterX, 0, slot[2] + jitterZ] as [number, number, number],
+      position: geographic
+        ? ([geographic.x, 0, geographic.z] as [number, number, number])
+        : ([slot[0] + jitterX, 0, slot[2] + jitterZ] as [number, number, number]),
       style,
       color: skin.color,
       soft: skin.soft,

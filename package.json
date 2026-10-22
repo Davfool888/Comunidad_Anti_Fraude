@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "lint": "oxlint",
-    "test": "npm run typecheck && npm run lint && npm run build"
+    "test:unit": "node --test \"src/**/*.test.ts\"",
+    "test": "npm run test:unit && npm run typecheck && npm run lint && npm run build"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",

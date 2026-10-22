@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Community, CommunityNetwork } from '../../data/networks'
-import { approximateHouses, type HousePoint, subscribeRealHouses } from '../../data/houses'
+import type { HousePoint } from '../../data/houses'
 import { STYLE_BY_BUSINESS } from '../three/network/arrangement'
 import type { ShopStyle } from '../three/network/palette'
 import { isoBuildingSvg, type IsoColors } from './isoBuilding'
@@ -39,42 +39,22 @@ const MAX_ZOOM = 21
 
 /** Zoom mínimo: el barrio completo dentro de la ciudad. */
 const MIN_ZOOM = 15
-
-/** Distancia en metros entre dos puntos (aproximación plana, suficiente aquí). */
-function distanceMeters(
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number },
-): number {
-  const lat = ((a.lat + b.lat) / 2) * (Math.PI / 180)
-  const dx = (a.lng - b.lng) * 111_320 * Math.cos(lat)
-  const dy = (a.lat - b.lat) * 111_320
-  return Math.hypot(dx, dy)
-}
-
-/**
- * Elige las casas donde se colocarán los comercios.
- *
- * Se quedan con las **más cercanas al centro del barrio**: así los
- * comercios forman un bloque compacto y el mapa puede abrirse a nivel de
- * casa sin que se pierda ninguno de la vista.
- */
-function pickAnchors(
-  houses: HousePoint[],
-  community: Community,
-  count: number,
-): HousePoint[] {
-  const center = { lat: community.lat, lng: community.lng }
-  return [...houses]
-    .sort((a, b) => distanceMeters(a, center) - distanceMeters(b, center))
-    .slice(0, Math.max(count, 1))
-}
 export function NeighborhoodMap({
   network,
   community,
+  anchors,
+  loading,
+  source,
   className = '',
 }: {
   network: CommunityNetwork
   community: Community
+  /** Casas donde se colocan los comercios (reales o aproximadas). */
+  anchors: HousePoint[]
+  /** true mientras se consultan las casas reales. */
+  loading: boolean
+  /** De dónde vienen los anclajes. */
+  source: 'openstreetmap' | 'aproximado'
   className?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -94,45 +74,6 @@ export function NeighborhoodMap({
       })),
     [community.businesses, community.id],
   )
-
-  // Las casas se colocan de inmediato con una distribución aproximada y, en
-  // cuanto OpenStreetMap responde, se ajustan a las posiciones reales.
-  const [houses, setHouses] = useState<HousePoint[]>(() =>
-    approximateHouses(community.id, community.lat, community.lng, shops.length + 4),
-  )
-  const [loading, setLoading] = useState(true)
-  const [source, setSource] = useState<'openstreetmap' | 'aproximado'>('aproximado')
-
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    setHouses(approximateHouses(community.id, community.lat, community.lng, shops.length + 4))
-    setSource('aproximado')
-
-    const unsubscribe = subscribeRealHouses(
-      community.id,
-      community.lat,
-      community.lng,
-      shops.length + 4,
-      (real) => {
-        if (!alive) return
-        setHouses(real)
-        setSource('openstreetmap')
-        setLoading(false)
-      },
-    )
-
-    // si la consulta no devuelve nada real, se queda con la aproximación
-    const timer = window.setTimeout(() => {
-      if (alive) setLoading(false)
-    }, 22_000)
-
-    return () => {
-      alive = false
-      window.clearTimeout(timer)
-      unsubscribe()
-    }
-  }, [community.id, community.lat, community.lng, shops.length])
 
   // Crea el mapa
   useEffect(() => {
@@ -199,16 +140,13 @@ export function NeighborhoodMap({
   // Coloca los comercios sobre las casas reales
   useEffect(() => {
     const map = mapRef.current
-    if (!map || houses.length === 0) return
+    if (!map || anchors.length === 0) return
 
     markersRef.current.forEach((marker) => marker.remove())
     markersRef.current = []
 
-    // Se reparten las construcciones más visibles entre los comercios
-    const anchors = pickAnchors(houses, community, shops.length + 4)
-
     shops.forEach((shop, index) => {
-      const house = anchors[index % Math.max(anchors.length, 1)]
+      const house = anchors[index % anchors.length]
       if (!house) return
 
       const skin = SKINS[index % SKINS.length]
@@ -250,7 +188,7 @@ export function NeighborhoodMap({
         map.setZoom(CLOSE_ZOOM, { animate: false })
       }
     }
-  }, [houses, shops, community])
+  }, [anchors, shops])
 
   return (
     <div className={`relative h-full w-full ${className}`}>

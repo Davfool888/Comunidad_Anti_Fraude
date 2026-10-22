@@ -2,11 +2,13 @@
  * Edificios reales de una comunidad de barrio.
  *
  * Para que los comercios no se coloquen al azar, consultamos **OpenStreetMap**
- * (Overpass) las constructions de la zona del barrio y usamos esas
- * coordenadas reales como anclaje. Si el servicio no está disponible, se
- * genera una distribución determinista alrededor del centro del barrio para
- * que la vista nunca quede vacía.
+ * las construcciones de la zona del barrio y usamos esas coordenadas reales
+ * como anclaje. Si el servicio no está disponible, se genera una distribución
+ * determinista alrededor del centro del barrio para que la vista nunca quede
+ * vacía (y así se indica en pantalla).
  */
+
+import { dedupeByDistance, isValidCoordinate, pointsWithinRadius } from '../lib/geo.ts'
 
 /** Una construcción real dentro de la zona consultada. */
 export type HousePoint = {
@@ -73,6 +75,25 @@ function byLevels(a: HousePoint, b: HousePoint) {
   return b.levels - a.levels
 }
 
+/**
+ * Limpia la respuesta del proveedor:
+ *
+ * 1. Descarta las coordenadas inválidas.
+ * 2. Descarta lo que cae fuera de la zona consultada (el proveedor puede
+ *    devolver edificaciones del otro lado de la calle o del municipio).
+ * 3. Quita los duplicados: el mismo edificio puede venir repetido.
+ */
+export function cleanHouses(
+  houses: HousePoint[],
+  center: { lat: number; lng: number },
+  radiusMeters = ZONE_RADIUS,
+): HousePoint[] {
+  const valid = houses.filter((house) => isValidCoordinate(house.lat, house.lng))
+  const inside = pointsWithinRadius(valid, center, radiusMeters)
+  const unique = dedupeByDistance(inside, 12)
+  return unique.sort(byLevels)
+}
+
 /** Espejos de Overpass: se prueban en orden hasta que uno responda. */
 const OVERPASS_MIRRORS = [
   'https://overpass-api.de/api/interpreter',
@@ -103,50 +124,97 @@ async function fetchFromOsmApi(
   if (!response.ok) throw new Error(`OSM respondió ${response.status}`)
 
   const xml = await response.text()
-  const document_ = new DOMParser().parseFromString(xml, 'application/xml')
+  return parseOsmBuildings(xml, communityId)
+}
 
+/**
+ * Lee los atributos de una etiqueta XML (`<tag k="building" v="yes"/>`).
+ */
+function readAttributes(tag: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
+  const pattern = /([\w:.-]+)="([^"]*)"/g
+  let match = pattern.exec(tag)
+  while (match) {
+    attributes[match[1]] = match[2]
+    match = pattern.exec(tag)
+  }
+  return attributes
+}
+
+/**
+ * Extrae las construcciones de un fragmento XML de OpenStreetMap.
+ *
+ * Es una función ** pura**: no usa el DOM ni la red, así que se puede
+ * comprobar con pruebas automáticas. Recibe el XML y devuelve sólo las
+ * edificaciones con coordenadas válidas.
+ */
+export function parseOsmBuildings(xml: string, communityId: string): HousePoint[] {
   // Coordenadas de los nodos
   const nodes = new Map<string, [number, number]>()
-  document_.querySelectorAll('node').forEach((node) => {
-    const id = node.getAttribute('id')
-    const latValue = Number(node.getAttribute('lat'))
-    const lngValue = Number(node.getAttribute('lon'))
-    if (id && Number.isFinite(latValue) && Number.isFinite(lngValue)) {
-      nodes.set(id, [latValue, lngValue])
+  const nodePattern = /<node\b([^>]*)>/g
+  let nodeMatch = nodePattern.exec(xml)
+  while (nodeMatch) {
+    const attributes = readAttributes(nodeMatch[1])
+    const lat = Number(attributes.lat)
+    const lng = Number(attributes.lon)
+    if (attributes.id && isValidCoordinate(lat, lng)) {
+      nodes.set(attributes.id, [lat, lng])
     }
-  })
+    nodeMatch = nodePattern.exec(xml)
+  }
 
   const houses: HousePoint[] = []
-  document_.querySelectorAll('way').forEach((way) => {
-    const tags = way.querySelectorAll('tag')
-    const isBuilding = [...tags].some(
-      (tag) => tag.getAttribute('k') === 'building' && tag.getAttribute('v') !== 'no',
-    )
-    if (!isBuilding) return
+  const wayPattern = /<way\b([^>]*)>([\s\S]*?)<\/way>/g
+  let wayMatch = wayPattern.exec(xml)
+  while (wayMatch) {
+    const wayAttributes = readAttributes(wayMatch[1])
+    const body = wayMatch[2]
 
-    // Centro de la polilínea
-    const points = [...way.querySelectorAll('nd')]
-      .map((nd) => nodes.get(nd.getAttribute('ref') ?? ''))
-      .filter((point): point is [number, number] => Boolean(point))
-    if (points.length === 0) return
+    // Etiquetas del trazado
+    const tags: Record<string, string> = {}
+    const tagPattern = /<tag\b([^>]*)\/>/g
+    let tagMatch = tagPattern.exec(body)
+    while (tagMatch) {
+      const attributes = readAttributes(tagMatch[1])
+      if (attributes.k) tags[attributes.k] = attributes.v ?? ''
+      tagMatch = tagPattern.exec(body)
+    }
 
-    const center = points.reduce(
-      (acc, point) => [acc[0] + point[0] / points.length, acc[1] + point[1] / points.length],
-      [0, 0] as [number, number],
-    )
+    if (tags.building && tags.building !== 'no') {
+      // Centro de la polilínea
+      const points: [number, number][] = []
+      const referencePattern = /<nd\b[^>]*\bref="(\d+)"[^>]*\/?>/g
+      let referenceMatch = referencePattern.exec(body)
+      while (referenceMatch) {
+        const point = nodes.get(referenceMatch[1])
+        if (point) points.push(point)
+        referenceMatch = referencePattern.exec(body)
+      }
 
-    const levelsTag = [...tags].find((tag) => tag.getAttribute('k') === 'building:levels')
-    const levels = Number(levelsTag?.getAttribute('v') ?? 0)
-    const kindTag = [...tags].find((tag) => tag.getAttribute('k') === 'building')
+      if (points.length > 0) {
+        const center = points.reduce(
+          (acc, point) => [
+            acc[0] + point[0] / points.length,
+            acc[1] + point[1] / points.length,
+          ],
+          [0, 0] as [number, number],
+        )
 
-    houses.push({
-      id: `${communityId}-${way.getAttribute('id')}`,
-      lat: center[0],
-      lng: center[1],
-      levels: Number.isFinite(levels) && levels > 0 ? Math.min(levels, 8) : 1,
-      kind: kindTag?.getAttribute('v') ?? 'yes',
-    })
-  })
+        if (isValidCoordinate(center[0], center[1])) {
+          const levels = Number(tags['building:levels'] ?? 0)
+          houses.push({
+            id: `${communityId}-${wayAttributes.id ?? houses.length}`,
+            lat: center[0],
+            lng: center[1],
+            levels: Number.isFinite(levels) && levels > 0 ? Math.min(levels, 8) : 1,
+            kind: tags.building,
+          })
+        }
+      }
+    }
+
+    wayMatch = wayPattern.exec(xml)
+  }
 
   return houses.sort(byLevels)
 }
@@ -281,7 +349,8 @@ export function getHouses(
 
   const request = fetchRealHouses(communityId, lat, lng)
     .then((houses) => {
-      const result = houses.length ? houses : fallbackHouses(communityId, lat, lng, count)
+      const clean = cleanHouses(houses, { lat, lng })
+      const result = clean.length ? clean : fallbackHouses(communityId, lat, lng, count)
       cache.set(communityId, result)
       persist(communityId, result)
       pending.delete(communityId)

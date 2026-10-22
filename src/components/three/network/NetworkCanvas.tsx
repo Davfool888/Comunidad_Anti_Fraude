@@ -5,6 +5,7 @@ import { Bloom, EffectComposer, N8AO, Vignette } from '@react-three/postprocessi
 import type { EffectComposer as EffectComposerImpl } from 'postprocessing'
 import * as THREE from 'three'
 import type { Community, CommunityNetwork } from '../../../data/networks'
+import type { HousePoint } from '../../../data/houses'
 import { useDocumentVisible, useViewport } from '../../../lib/useViewport'
 import { NetworkScene } from './NetworkScene'
 import { iso } from './palette'
@@ -83,10 +84,13 @@ export const NetworkCanvas = memo(function NetworkCanvas({
   className = '',
   network,
   community,
+  anchors,
 }: {
   className?: string
   network?: CommunityNetwork
   community?: Community
+  /** Casas reales donde están los comercios (OpenStreetMap). */
+  anchors?: HousePoint[]
 }) {
   const sky = useSkyTexture()
   const composerRef = useRef<EffectComposerImpl | null>(null)
@@ -117,7 +121,7 @@ export const NetworkCanvas = memo(function NetworkCanvas({
       >
         <primitive attach="background" object={sky} />
 
-        <NetworkScene network={network} community={community} />
+        <NetworkScene network={network} community={community} anchors={anchors} />
 
         <EffectComposer ref={composerRef} multisampling={2}>
           {/* oclusión ambiental: micro-sombras donde los objetos se tocan */}

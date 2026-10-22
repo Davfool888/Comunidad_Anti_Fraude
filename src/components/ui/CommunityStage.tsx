@@ -1,5 +1,6 @@
 import { Suspense, lazy, useState } from 'react'
 import type { Community, CommunityNetwork } from '../../data/networks'
+import { useCommunityHouses } from '../../lib/useCommunityHouses'
 import { NetworkHero } from './NetworkHero'
 
 /**
@@ -8,6 +9,9 @@ import { NetworkHero } from './NetworkHero'
  * Por defecto muestra el **mapa 2**: la comunidad de barrio a vista de cerca,
  * con los comercios colocados encima de las casas reales de la zona. Desde el
  * conmutador se puede pasar a la **vista isométrica** (la escena 3D).
+ *
+ * Las dos vistas comparten los **mismos datos de las casas reales**, así que
+ * un comercio se ve en el mismo sitio en el mapa y en la escena 3D.
  *
  * Los dos mapas se cargan en diferido porque arrastran Leaflet.
  */
@@ -32,6 +36,9 @@ export function CommunityStage({
 }) {
   const [view, setView] = useState<'mapa' | 'isometrica'>('mapa')
 
+  // Una sola consulta de casas por barrio: la usan el mapa y la escena 3D.
+  const { anchors, loading, source } = useCommunityHouses(community, community?.businesses.length ?? 8)
+
   return (
     <div className="relative h-[100svh] min-h-[560px] w-full overflow-hidden">
       {view === 'mapa' ? (
@@ -46,6 +53,9 @@ export function CommunityStage({
             <NeighborhoodMap
               network={network}
               community={community}
+              anchors={anchors}
+              loading={loading}
+              source={source}
               className="absolute inset-0"
             />
           </Suspense>
@@ -58,6 +68,7 @@ export function CommunityStage({
         <NetworkHero
           network={network}
           community={community}
+          anchors={anchors}
           onOpenChat={onOpenChat}
           chatOpen={chatOpen}
         />
