@@ -362,6 +362,79 @@ export type PlanMeasure = {
 }
 
 /* ------------------------------------------------------------------ */
+/* Juego 9 · Anatomía de una tarjeta                                    */
+/* ------------------------------------------------------------------ */
+
+/** Cara de la tarjeta en la que vive un campo. */
+export type CardFieldSide = 'front' | 'back'
+
+/** Naturaleza educativa de un campo de la tarjeta. */
+export type CardFieldKind = 'institution' | 'physical' | 'identifier' | 'expiry' | 'secret'
+
+/** Campo visible y seleccionable de la tarjeta ficticia. */
+export type CardField = {
+  id: string
+  /** Nombre accesible y visible del campo. */
+  label: string
+  /** Valor ficticio que se muestra en la tarjeta. */
+  value: string
+  side: CardFieldSide
+  kind: CardFieldKind
+  /** Explicación general del campo, independiente de la pregunta. */
+  explanation: string
+}
+
+/** Cómo se responde una pregunta de la tarjeta. */
+export type CardInteractionType = 'single' | 'multiple' | 'classify'
+
+/** Categoría para la pregunta de clasificación. */
+export type CardClassificationOption = {
+  id: string
+  label: string
+  description: string
+}
+
+/**
+ * Pregunta basada en la tarjeta. La evaluación vive en
+ * `src/lib/learning/cardAnatomy.ts`, no en el componente visual.
+ */
+export type CardQuestion = {
+  id: string
+  /** Tipo pedagógico: selección, identificar, secreto, riesgo, clasificar. */
+  kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'insufficient'
+  categoryId: string
+  prompt: string
+  instruction: string
+  interactionType: CardInteractionType
+  /** Campos que forman la respuesta esperada. */
+  correctFieldIds: string[]
+  /** Campos que sirven como distractores explícitos. */
+  distractorFieldIds: string[]
+  /** Máximo de campos que se pueden marcar a la vez. */
+  maxSelections: number
+  /** Número de campos que se espera seleccionar. */
+  expectedSelections: number
+  /** Cara que conviene mostrar al abrir la pregunta. */
+  initialSide?: CardFieldSide
+  /** Preguntas que admiten «no hay información suficiente». */
+  allowInsufficient?: boolean
+  /** Veredicto de la opción de información insuficiente. */
+  correctVerdict?: Verdict
+  /** Texto visible del botón de información insuficiente. */
+  insufficientLabel?: string
+  /** Configuración de la pregunta de clasificación. */
+  classify?: {
+    targetFieldId: string
+    correctClassificationId: string
+    options: CardClassificationOption[]
+  }
+  /** Explicación específica por campo (incluye distractores). */
+  fieldExplanations: Record<string, string>
+  generalExplanation: string
+  safetyRecommendation: string
+}
+
+/* ------------------------------------------------------------------ */
 /* Registro de juegos                                                    */
 /* ------------------------------------------------------------------ */
 

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "lint": "oxlint",
-    "test": "npm run typecheck && npm run lint && npm run build",
+    "test:unit": "node --test \"src/**/*.test.ts\"",
+    "test": "npm run test:unit && npm run typecheck && npm run lint && npm run build",
     "postinstall": "node scripts/setup-vision.mjs",
     "dev:api": "cd server && .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000",
     "test:api": "cd server && .venv/Scripts/python -m pytest -q"

@@ -113,6 +113,21 @@ export const GAME_INTROS: Record<string, GameIntro> = {
       'Activa la verificación en dos pasos, revisa el correo de recuperación y avisa a tus contactos si tu cuenta pudo usarse.',
     illustration: 'credentials',
   },
+  'anatomia-tarjeta': {
+    title: 'Anatomía de una tarjeta',
+    summary:
+      'Una tarjeta bancaria contiene varios datos que se usan juntos para identificar una cuenta y autorizar pagos. En este juego vas a tocar sus campos sobre una tarjeta ficticia, distinguir qué información es sensible y comprobar por qué una foto no demuestra que la tarjeta esté activa. No vas a introducir datos reales.',
+    howItWorks:
+      'Verás una tarjeta de demostración con anverso y reverso. Cada pregunta te pide tocar uno o varios campos; después recibes una explicación sobre el papel de cada dato y una recomendación para protegerlo. Al final se resumen las decisiones seguras y lo que conviene repasar.',
+    signs: [
+      'Alguien pide el número, la fecha y el CVV por el mismo canal.',
+      'Una foto de tarjeta se presenta como prueba de un pago.',
+      'Un supuesto banco solicita datos por teléfono o chat.',
+    ],
+    prevention:
+      'Protege los datos de la tarjeta en conjunto, no compartas el CVV y confirma cualquier pago desde el canal oficial. Una imagen de una tarjeta no prueba que esté activa ni que tenga fondos.',
+    illustration: 'card',
+  },
   plan: {
     title: 'Un plan que puedas sostener',
     summary:

@@ -81,6 +81,11 @@ export const learningIcons: Record<string, React.ReactNode> = {
       <path d="M6 2h12v20l-3-2-3 2-3-2-3 2V2Zm3 5v2h6V7H9Zm0 4v2h6v-2H9Z" />
     </svg>
   ),
+  card: (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden="true">
+      <path d="M3 4h18a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 3v3h18V7H3Zm0 5v6h18v-6H3Zm2 3h5v2H5v-2Z" />
+    </svg>
+  ),
   cart: (
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden="true">
       <path d="M3 3h2.2l2.3 11.4A2 2 0 0 0 9.5 16h7.9a2 2 0 0 0 2-1.6L21 7H6.4l.5 2.5H21l-1.6 7H9.5L7.2 5H3V3Zm6 15.5A1.8 1.8 0 1 1 9 18.3a1.8 1.8 0 0 1 0-.1Zm8 0a1.8 1.8 0 1 1-1.8 1.8 1.8 1.8 0 0 1 1.8-1.8Z" />
